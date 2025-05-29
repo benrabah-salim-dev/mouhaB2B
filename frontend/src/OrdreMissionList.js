@@ -9,10 +9,12 @@ const OrdresMissionList = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const API_URL = process.env.REACT_APP_API_URL;
+
 
   useEffect(() => {
     // Attention, il faut que ton API accepte ce filtre agence_id
-    axios.get(`http://127.0.0.1:8000/api/ordres_mission/?agence=${agence_id}`)
+    axios.get(`{API_URL}/api/ordres_mission/?agence=${agence_id}`)
       .then(res => {
         setOrdres(res.data);
         setLoading(false);
@@ -58,7 +60,7 @@ const OrdresMissionList = () => {
                 <td>
                 <a
                  className="btn btn-sm btn-primary"
-                 href={`http://127.0.0.1:8000/api/ordre-mission/${ordre.id}/pdf/`}
+                 href={`{API_URL}/api/ordre-mission/${ordre.id}/pdf/`}
                  target="_blank"
                 rel="noopener noreferrer"
                 >

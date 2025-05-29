@@ -10,10 +10,12 @@ const DashboardAgence = () => {
   const [loadingDossiers, setLoadingDossiers] = useState(true);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const API_URL = process.env.REACT_APP_API_URL;
+
 
   // Récupérer les infos de l'agence
   useEffect(() => {
-    axios.get(`http://127.0.0.1:8000/api/agences/${agence_id}/`)
+    axios.get(`${API_URL}/api/agences/${agence_id}/`)
       .then(res => {
         setAgence(res.data);
         setLoadingAgence(false);
@@ -26,7 +28,7 @@ const DashboardAgence = () => {
 
   // Récupérer les dossiers liés à l'agence
   useEffect(() => {
-    axios.get(`http://127.0.0.1:8000/api/dossiers/?agence=${agence_id}`)
+    axios.get(`${API_URL}/api/dossiers/?agence=${agence_id}`)
       .then(res => {
         setDossiers(res.data);
         setLoadingDossiers(false);

@@ -9,6 +9,8 @@ const ImporterDossier = () => {
   const [message, setMessage] = useState('');
   const [dossiersImportes, setDossiersImportes] = useState([]);
   const navigate = useNavigate();
+  const API_URL = process.env.REACT_APP_API_URL;
+
 
   const handleFileChange = (e) => setFile(e.target.files[0]);
 
@@ -27,7 +29,7 @@ const ImporterDossier = () => {
     formData.append('agence', agence_id);
 
     try {
-      const response = await axios.post('http://127.0.0.1:8000/api/importer-dossier/', formData, {
+      const response = await axios.post('{API_URL}/api/importer-dossier/', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       setDossiersImportes(response.data);

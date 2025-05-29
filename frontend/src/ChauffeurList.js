@@ -8,9 +8,10 @@ const ChauffeurList = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const API_URL = process.env.REACT_APP_API_URL;
 
   useEffect(() => {
-    axios.get(`http://127.0.0.1:8000/api/chauffeurs/?agence=${agence_id}`)
+    axios.get(`${API_URL}/api/chauffeurs/?agence=${agence_id}`)
       .then(res => {
         setChauffeurs(res.data);
         setLoading(false);

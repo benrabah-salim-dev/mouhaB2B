@@ -12,13 +12,15 @@ const AjouterOrdreMission = ({ missionId, onSuccess }) => {
   const [trajet, setTrajet] = useState('');
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+  const API_URL = process.env.REACT_APP_API_URL;
+
 
   useEffect(() => {
-    axios.get('http://127.0.0.1:8000/api/buses/')
+    axios.get('{API_URL}/api/buses/')
       .then(res => setBusList(res.data))
       .catch(() => setError("Erreur chargement des bus"));
 
-    axios.get('http://127.0.0.1:8000/api/chauffeurs/')
+    axios.get('{API_URL}/api/chauffeurs/')
       .then(res => setChauffeurList(res.data))
       .catch(() => setError("Erreur chargement des chauffeurs"));
   }, []);
@@ -40,7 +42,7 @@ const AjouterOrdreMission = ({ missionId, onSuccess }) => {
       trajet,
     };
 
-    axios.post('http://127.0.0.1:8000/api/ordres_mission/', data)
+    axios.post('{API_URL}/api/ordres_mission/', data)
       .then(() => {
         setSuccess(true);
         setError(null);

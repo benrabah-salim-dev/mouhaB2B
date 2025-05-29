@@ -15,6 +15,8 @@ function FicheMouvementForm() {
   const [chauffeurId, setChauffeurId] = useState('');
   const [message, setMessage] = useState('');
 
+  const API_URL = process.env.REACT_APP_API_URL;
+
   // Étapes du trajet 
   const [etapes, setEtapes] = useState(['', '']); // Minimum départ + arrivée
 
@@ -29,11 +31,11 @@ function FicheMouvementForm() {
   const trajetFinal = etapes.filter(e => e.trim() !== '').join(' ➝ ');
 
   useEffect(() => {
-    axios.get('http://localhost:8000/api/vehicules/')
+    axios.get('{API_URL}/api/vehicules/')
       .then(res => setVehicules(res.data))
       .catch(err => console.error("Erreur véhicules :", err));
 
-    axios.get('http://localhost:8000/api/chauffeurs/')
+    axios.get('{API_URL}/api/chauffeurs/')
       .then(res => setChauffeurs(res.data))
       .catch(err => console.error("Erreur chauffeurs :", err));
   }, []);
@@ -49,7 +51,7 @@ function FicheMouvementForm() {
         
         await
          axios.post(
-            'http://localhost:8000/api/creer-fiche-mouvement/',
+            '{API_URL}/api/creer-fiche-mouvement/',
             JSON.stringify({
               dossier_references: selectedDossiers,
               trajet: trajetFinal,
