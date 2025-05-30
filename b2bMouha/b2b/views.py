@@ -1,15 +1,14 @@
 from rest_framework import viewsets
 from rest_framework.permissions import AllowAny
-from .models import AgenceVoyage, Vehicule, Chauffeur, Dossier, PreMission, Mission, OrdreMission,Touriste,Hotel
+from .models import AgenceVoyage, Vehicule, Chauffeur, Dossier, PreMission, Mission, OrdreMission, Touriste, Hotel
 from .serializers import (
     AgenceVoyageSerializer, VehiculeSerializer, ChauffeurSerializer, DossierSerializer,
-    PreMissionSerializer, MissionSerializer, OrdreMissionSerializer,UserSerializer
+    PreMissionSerializer, MissionSerializer, OrdreMissionSerializer, UserSerializer
 )
 from django.utils.dateparse import parse_datetime
 from django.shortcuts import get_object_or_404
 from .utils import generate_unique_reference
 from django.contrib.auth.models import User
-
 from django.http import HttpResponse
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
@@ -21,11 +20,36 @@ from rest_framework import status
 import pandas as pd
 from django.db import transaction
 from rest_framework.permissions import IsAuthenticated
-
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.response import Response
-from rest_framework.views import APIView
-from django.contrib.auth.models import User
+import requests
+from datetime import datetime
+
+# Fonction utilitaire pour enrichir les infos d'hôtel via Nominatim (OpenStreetMap)
+def get_hotel_info_from_nominatim(hotel_name, country='Tunisie'):
+    query = hotel_name
+    if country:
+        query += f", {country}"
+        
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {
+        'q': hotel_name,
+        'format': 'json',
+        'limit': 1,
+        'addressdetails': 1,
+        'accept-language': 'fr'
+    }
+    headers = {
+        "User-Agent": "mouhaB2B/1.0"
+    }
+    try:
+        response = requests.get(url, params=params, headers=headers)
+        data = response.json()
+        if not data:
+            return None, (None, None)
+        return data[0]['display_name'], (data[0]['lat'], data[0]['lon'])
+    except Exception:
+        return None, (None, None)
+
 
 # Exemple de vue pour la connexion utilisateur
 class LoginView(APIView):
@@ -260,14 +284,24 @@ class ImporterDossierAPIView(APIView):
                 print(f"Ligne {index}: pas de référence valide, ligne ignorée")
                 continue
 
-            # Recherche hôtel
+  # Recherche hôtel
             hotel_nom = None
             for col_hotel in ['Hotel.1', 'Hotel', 'hotel']:
                 if col_hotel in df.columns and pd.notna(row.get(col_hotel)):
                     hotel_nom = str(row.get(col_hotel)).strip()
                     break
-            hotel = Hotel.objects.filter(nom=hotel_nom).first() if hotel_nom else None
+            hotel = None
+            if hotel_nom:
+                adresse, (lat, lon) = get_hotel_info_from_nominatim(hotel_nom, country=pays)
+                hotel, created = Hotel.objects.get_or_create(nom=hotel_nom)
+            if not created and (not hotel.adresse and adresse):
+                hotel.adresse = adresse
+                hotel.save()
 
+
+
+            
+            
             date_val = row.get('Dia') if 'Dia' in df.columns else None
             horaire_val = None
             for col_horaire in ['HORAIRES', 'Hora', 'Horaire', 'horaire', 'Fecha Formalización']:

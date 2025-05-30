@@ -29,7 +29,7 @@ const ImporterDossier = () => {
     formData.append('agence', agence_id);
 
     try {
-      const response = await axios.post('{API_URL}/api/importer-dossier/', formData, {
+      const response = await axios.post(`${API_URL}/api/importer-dossier/`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       setDossiersImportes(response.data);

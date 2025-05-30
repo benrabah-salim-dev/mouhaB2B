@@ -58,7 +58,7 @@ class Succursale(models.Model):
 
 class Hotel(models.Model):
     nom = models.CharField(max_length=100)
-    adresse = models.TextField(blank=True)
+    adresse = models.TextField(blank=True, null=True)
 
     def __str__(self):
         return self.nom
