@@ -26,7 +26,7 @@ const AjouterChauffeur = () => {
       agence: agence_id,
     };
 
-    axios.post('http://127.0.0.1:8000/api/chauffeurs/', chauffeurData)
+    axios.post(`${API_URL}/api/chauffeurs/`, chauffeurData)
       .then(response => {
         setSuccess(true);
         setError(null);

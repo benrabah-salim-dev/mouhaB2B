@@ -1,12 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState , useContext} from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AuthContext } from '../context/AuthContext';
 
 function DossiersTable() {
   const [dossiers, setDossiers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedDossiers, setSelectedDossiers] = useState([]);
+  const { user } = useContext(AuthContext);
   const navigate = useNavigate();
+  
 
   const [filterType, setFilterType] = useState('all');
   const [filterAeroport, setFilterAeroport] = useState('');
@@ -16,9 +19,20 @@ function DossiersTable() {
   const dossiersPerPage = 10;
   const API_URL = process.env.REACT_APP_API_URL;
 
-
   useEffect(() => {
-    fetch('http://localhost:8000/api/dossiers/')
+    if (!user) {
+      setError("Utilisateur non connecté.");
+      setLoading(false);
+      return;
+    }
+
+    // Construire URL selon rôle
+    let url = `${API_URL}/api/dossiers/`;
+    if (user.role !== 'superadmin' && user.agence_id) {
+      url += `?agence=${user.agence_id}`;
+    }
+
+    fetch(url)
       .then(response => {
         if (!response.ok) throw new Error('Erreur lors de la récupération des dossiers');
         return response.json();
@@ -31,7 +45,10 @@ function DossiersTable() {
         setError(err.message);
         setLoading(false);
       });
-  }, []);
+  }, [user, API_URL]);
+
+
+
 
   const toggleSelect = (ref) => {
     setSelectedDossiers(prev =>

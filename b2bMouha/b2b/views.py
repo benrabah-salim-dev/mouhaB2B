@@ -51,33 +51,35 @@ def get_hotel_info_from_nominatim(hotel_name, country='Tunisie'):
         return None, (None, None)
 
 
-# Exemple de vue pour la connexion utilisateur
 class LoginView(APIView):
     def post(self, request):
-        username = request.data.get('username')
-        password = request.data.get('password')
+        username = request.data.get("username")
+        password = request.data.get("password")
 
-        # Vérifier les identifiants
         user = User.objects.filter(username=username).first()
         if not user or not user.check_password(password):
-            return Response({'detail': 'Invalid credentials'}, status=400)
+            return Response({"detail": "Nom d'utilisateur ou mot de passe incorrect"}, status=401)
 
-        # Générer les tokens
         refresh = RefreshToken.for_user(user)
 
-        # Définir le rôle de l'utilisateur
+        # Valeurs par défaut
         role = 'superadmin' if user.is_superuser else 'adminagence'
+        agence_id = None
 
-        # Si vous avez un profil utilisateur avec des informations supplémentaires
-        # exemple : profile = user.profile, vous pouvez également récupérer l'ID de l'agence ici.
-        agence_id = user.profile.agence.id if hasattr(user, 'profile') else None
+        if hasattr(user, 'profile'):
+            if user.profile.role:
+                role = user.profile.role
+            if user.profile.agence:
+                agence_id = user.profile.agence.id
 
         return Response({
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
-            'role': role,  # Ajoutez ici le rôle
-            'agence_id': agence_id  # Si nécessaire
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "role": role,
+            "agence_id": agence_id,
         })
+
+
 
 class UserView(APIView):
     permission_classes = [IsAuthenticated]
@@ -123,14 +125,16 @@ class ChauffeurViewSet(viewsets.ModelViewSet):
 
 class DossierViewSet(viewsets.ModelViewSet):
     serializer_class = DossierSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        agence_id = self.request.query_params.get('agence')
-        if agence_id:
-            return Dossier.objects.filter(agence_id=agence_id)
-        return Dossier.objects.all()
-    
+        user = self.request.user
+
+        if hasattr(user, 'profile') and user.profile.role == 'adminagence':
+            return Dossier.objects.filter(agence=user.profile.agence)
+
+        return Dossier.objects.all()  # superadmin
+
 class PreMissionViewSet(viewsets.ModelViewSet):
     serializer_class = PreMissionSerializer
     permission_classes = [AllowAny]

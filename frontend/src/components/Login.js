@@ -1,89 +1,72 @@
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
+import { AuthContext } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import 'bootstrap/dist/css/bootstrap.min.css';
+import SMEKSLogoLogin  from '../assets/smeksLogo.jpg';
 
-const Login = () => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+
+export default function LoginPage() {
+  const { login } = useContext(AuthContext);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState(null);
   const navigate = useNavigate();
-  
-  const handleLogin = async (e) => {
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-
+    setError(null);
     try {
-      const response = await fetch('{API_URL}/api/token/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ username, password }),
-      });
+      await login(username, password);
 
-      // Vérification de la réponse
-      if (!response.ok) {
-        const errorData = await response.json();
-        setError(errorData.detail || 'Erreur de connexion');
-        return;
-      }
-
-      const data = await response.json();
-      
-      // Affichage de la réponse de l'API dans la console pour le débogage
-      console.log('Réponse de l\'API:', data);
-
-      // Sauvegarde des informations d'authentification dans localStorage
-      localStorage.setItem('access_token', data.access);
-      localStorage.setItem('refresh_token', data.refresh);
-      localStorage.setItem('user_role', data.role);  // Enregistrement du rôle
-      localStorage.setItem('agence_id', data.agence_id); // Sauvegarder l'ID de l'agence si disponible
-
-      // Redirection en fonction du rôle de l'utilisateur
-      if (data.role === 'superadmin') {
-        navigate('/admin/dashboard');
-      } else if (data.role === 'adminagence') {
-        navigate(`/agence/${data.agence_id}/dashboard`);
+      // Redirection selon le rôle de l'utilisateur
+      const userData = JSON.parse(localStorage.getItem("userData"));
+      if (userData.role === "superadmin") {
+        navigate("/dashboard/superadmin");
+      } else if (userData.role === "adminagence" && userData.agence_id) {
+        navigate(`/agence/${userData.agence_id}/dashboard`);
       } else {
-        setError('Rôle utilisateur non reconnu');
+        setError("Rôle ou agence non défini");
       }
-
-    } catch (error) {
-      console.error('Erreur lors de la connexion:', error);
-      setError('Une erreur est survenue. Veuillez réessayer plus tard.');
+    } catch (err) {
+      setError("Nom d'utilisateur ou mot de passe incorrect");
     }
   };
 
-
   return (
     <div className="container mt-5">
-      <h2>Connexion</h2>
-      {error && <div className="alert alert-danger">{error}</div>}
-      <form onSubmit={handleLogin}>
-        <div className="mb-3">
-          <label htmlFor="username" className="form-label">Nom d'utilisateur</label>
-          <input
-            type="text"
-            id="username"
-            className="form-control"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            required
-          />
+      <div className="row justify-content-center">
+        <div className="col-md-4">
+        <img src={SMEKSLogoLogin} alt="Logo" style={{ width: '200px', height: '50px' }} />
+
+          <h3 className="text-center mb-4">Connexion</h3>
+          <form onSubmit={handleSubmit} className="p-4 border rounded shadow-sm bg-light">
+            <div className="mb-3">
+              <label className="form-label">Nom d'utilisateur</label>
+              <input
+                type="text"
+                className="form-control"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                placeholder="Nom d'utilisateur"
+                required
+              />
+            </div>
+            <div className="mb-3">
+              <label className="form-label">Mot de passe</label>
+              <input
+                type="password"
+                className="form-control"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="Mot de passe"
+                required
+              />
+            </div>
+            {error && <div className="alert alert-danger">{error}</div>}
+            <button type="submit" className="btn btn-primary w-100">Se connecter</button>
+          </form>
         </div>
-        <div className="mb-3">
-          <label htmlFor="password" className="form-label">Mot de passe</label>
-          <input
-            type="password"
-            id="password"
-            className="form-control"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </div>
-        <button type="submit" className="btn btn-primary">Se connecter</button>
-      </form>
+      </div>
     </div>
   );
-};
-
-export default Login;
+}
