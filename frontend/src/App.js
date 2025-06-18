@@ -16,11 +16,13 @@ import ImporterDossier from './ImporterDossier';
 import DossiersTable from './components/DossiersTable';
 import FicheMouvement from './components/FicheMouvement';
 import LoginPage from './components/Login';
+import HotelList from './HotelList.js';
 import { AuthProvider } from './context/AuthContext';
 
 function App() {
   return (
     <Router>
+      <AuthProvider>
       <Routes>
         {/* Routes publiques */}
         <Route path="/login" element={<LoginPage />} />
@@ -44,7 +46,9 @@ function App() {
         <Route path="/DossierTable" element={<DossiersTable />} />
         <Route path="/FicheMouvement" element={<FicheMouvement />} />
         <Route path="/importer-dossier/:agence_id" element={<ImporterDossier />} />
+        <Route path="/hotels" element={<HotelList />} />
       </Routes>
+      </AuthProvider>
     </Router>
   );
 }

@@ -10,6 +10,8 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 import os
 from pathlib import Path
 from decouple import config, Csv
+from datetime import timedelta
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -127,6 +129,14 @@ REST_FRAMEWORK = {
         'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+}
+
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),  # Temps d'expiration du token d'accès
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),  # Temps d'expiration du refresh token
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
 }
 
 

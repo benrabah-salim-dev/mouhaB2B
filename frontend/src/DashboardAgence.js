@@ -3,7 +3,6 @@ import axios from 'axios';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { AuthContext } from './context/AuthContext';
 import Navbar from './components/Navbar';
-import AgenceVoyageList from './AgenceVoyageList';
 
 const DashboardAgence = () => {
   const { user } = useContext(AuthContext);
@@ -18,6 +17,24 @@ const DashboardAgence = () => {
   const [dossiers, setDossiers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedDossiers, setSelectedDossiers] = useState([]);
+  const [data, setData] = useState(null);
+
+  const [filters, setFilters] = useState({
+    reference: '',
+    nom_reservation: '',
+    ville: '',
+    aeroport_arrivee: '',
+    num_vol_arrivee: '',
+  });
+
+  const handleFilterChange = (e) => {
+    const { name, value } = e.target;
+    setFilters((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -27,7 +44,6 @@ const DashboardAgence = () => {
         return;
       }
 
-      // Cas superadmin sans agence sélectionnée → pas de fetch ici
       if (isSuperAdmin && !agenceParam) {
         setLoading(false);
         return;
@@ -40,11 +56,10 @@ const DashboardAgence = () => {
       }
 
       try {
-        // Si superadmin, on récupère les infos de l'agence spécifique, sinon on récupère uniquement les dossiers de l'agence de l'admin
         const agenceRes = await axios.get(`${API_URL}/api/agences/${agence_id}/`);
         setAgence(agenceRes.data);
 
-        // Filtrage des dossiers uniquement pour l'agence concernée
+        // Récupérer les dossiers associés à l'agence
         const dossiersRes = await axios.get(`${API_URL}/api/dossiers/?agence=${agence_id}`);
         setDossiers(dossiersRes.data);
       } catch (err) {
@@ -58,24 +73,37 @@ const DashboardAgence = () => {
     fetchData();
   }, [user, agenceParam, agence_id, API_URL, isSuperAdmin]);
 
-  // === AFFICHAGE ===
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const response = await axios.get('http://127.0.0.1:8000/api/dossiers/');
+        setData(response.data);
+      } catch (error) {
+        console.error("Erreur lors de la récupération des données:", error);
+      }
+    };
+    fetchData();
+  }, []);
+
+  const toggleSelect = (ref) => {
+    setSelectedDossiers(prev =>
+      prev.includes(ref) ? prev.filter(r => r !== ref) : [...prev, ref]
+    );
+  };
+
+  const filteredDossiers = dossiers.filter((dossier) => {
+    return (
+      dossier.reference.toLowerCase().includes(filters.reference.toLowerCase()) &&
+      dossier.nom_reservation.toLowerCase().includes(filters.nom_reservation.toLowerCase()) &&
+      dossier.ville.toLowerCase().includes(filters.ville.toLowerCase()) &&
+      dossier.aeroport_arrivee.toLowerCase().includes(filters.aeroport_arrivee.toLowerCase()) &&
+      dossier.num_vol_arrivee.toLowerCase().includes(filters.num_vol_arrivee.toLowerCase())
+    );
+  });
 
   if (loading) return <p>Chargement en cours...</p>;
   if (error) return <p style={{ color: 'red' }}>{error}</p>;
 
-  //  Affichage global pour le Superadmin
-  if (isSuperAdmin && !agenceParam) {
-    return (
-      <>
-        <Navbar />
-        <div className="container mt-4">
-          <AgenceVoyageList />
-        </div>
-      </>
-    );
-  }
-
-  //  Dashboard de l’agence spécifique
   return (
     <>
       <Navbar />
@@ -103,24 +131,92 @@ const DashboardAgence = () => {
           </button>
         </div>
 
-        {dossiers.length === 0 ? (
+        {/* Filtres */}
+        <div className="mb-3 d-flex gap-2">
+          <input
+            type="text"
+            name="reference"
+            value={filters.reference}
+            onChange={handleFilterChange}
+            className="form-control"
+            placeholder="Filtrer par Référence"
+          />
+          <input
+            type="text"
+            name="nom_reservation"
+            value={filters.nom_reservation}
+            onChange={handleFilterChange}
+            className="form-control"
+            placeholder="Filtrer par Nom Réservation"
+          />
+          <input
+            type="text"
+            name="ville"
+            value={filters.ville}
+            onChange={handleFilterChange}
+            className="form-control"
+            placeholder="Filtrer par Ville"
+          />
+          <input
+            type="text"
+            name="aeroport_arrivee"
+            value={filters.aeroport_arrivee}
+            onChange={handleFilterChange}
+            className="form-control"
+            placeholder="Filtrer par Aéroport Arrivée"
+          />
+          <input
+            type="text"
+            name="num_vol_arrivee"
+            value={filters.num_vol_arrivee}
+            onChange={handleFilterChange}
+            className="form-control"
+            placeholder="Filtrer par Num Vol Arrivée"
+          />
+        </div>
+
+        {filteredDossiers.length === 0 ? (
           <p>Aucun dossier trouvé.</p>
         ) : (
           <table className="table table-striped">
             <thead>
               <tr>
+                <th>Sélectionner</th>
                 <th>Référence</th>
                 <th>Nom réservation</th>
-                <th>Nombre personnes</th>
+                <th>Ville</th>
+                <th>Aéroport Arrivée</th>
+                <th>Aéroport Depart</th>
+                <th>Num Vol Arrivée</th>
+                <th>Heure Arrivée</th>
+                <th>Heure Départ</th>
+                <th>Nombre Personnes Arrivée</th>
+                <th>Num Vol Retour</th>
+                <th>Nombre Personnes Retour</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {dossiers.map((dossier) => (
+              {filteredDossiers.map((dossier) => (
                 <tr key={dossier.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selectedDossiers.includes(dossier.reference)}
+                      onChange={() => toggleSelect(dossier.reference)}
+                    />
+                  </td>
                   <td>{dossier.reference}</td>
                   <td>{dossier.nom_reservation}</td>
+                  <td>{dossier.ville || 'Non spécifiée'}</td>
+                  <td>{dossier.aeroport_arrivee}</td>
+                  <td>{dossier.aeroport_depart}</td>
+                  <td>{dossier.num_vol_arrivee}</td>
+                  <td>{dossier.heure_arrivee ? new Date(dossier.heure_arrivee).toLocaleString() : ''}</td>
+                  <td>{dossier.heure_depart ? new Date(dossier.heure_depart).toLocaleString() : ''}</td>
                   <td>{dossier.nombre_personnes_arrivee}</td>
+                  <td>{dossier.num_vol_retour}</td>
+                  <td>{dossier.nombre_personnes_retour}</td>
                   <td>
                     <Link
                       className="btn btn-sm btn-info me-2"
@@ -133,6 +229,17 @@ const DashboardAgence = () => {
               ))}
             </tbody>
           </table>
+        )}
+
+        {selectedDossiers.length > 0 && (
+          <div className="mt-3">
+            <button
+              className="btn btn-primary"
+              onClick={() => navigate('/FicheMouvement', { state: { selectedDossiers } })}
+            >
+              Créer une fiche de mouvement
+            </button>
+          </div>
         )}
 
         {isSuperAdmin && (

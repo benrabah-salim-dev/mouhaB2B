@@ -1,3 +1,4 @@
+// src/components/ImporterDossier.js
 import React, { useState } from 'react';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -10,7 +11,6 @@ const ImporterDossier = () => {
   const [dossiersImportes, setDossiersImportes] = useState([]);
   const navigate = useNavigate();
   const API_URL = process.env.REACT_APP_API_URL;
-
 
   const handleFileChange = (e) => setFile(e.target.files[0]);
 
@@ -26,16 +26,23 @@ const ImporterDossier = () => {
 
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('agence', agence_id);
+    formData.append('agence', agence_id); // Nous envoyons l'ID de l'agence pour l'associer
 
     try {
       const response = await axios.post(`${API_URL}/api/importer-dossier/`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      setDossiersImportes(response.data);
-      setMessage('Importation réussie !');
+
+      // Vérifier si les dossiers sont bien importés
+      if (response.data.dossiers_crees) {
+        setDossiersImportes(response.data.dossiers_crees);
+        setMessage('Importation réussie !');
+      } else {
+        setMessage('Aucun dossier importé.');
+      }
     } catch (error) {
       setMessage('Erreur lors de l\'importation.');
+      console.error('Erreur importation:', error);
     } finally {
       setLoading(false);
     }

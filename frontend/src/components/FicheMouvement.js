@@ -14,64 +14,69 @@ function FicheMouvementForm() {
   const [vehiculeId, setVehiculeId] = useState('');
   const [chauffeurId, setChauffeurId] = useState('');
   const [message, setMessage] = useState('');
-
+  const [dossiers, setDossiers] = useState([]);
+  const [user, setUser] = useState(null);  // Ajout de l'état pour l'utilisateur
   const API_URL = process.env.REACT_APP_API_URL;
 
-  // Étapes du trajet 
-  const [etapes, setEtapes] = useState(['', '']); // Minimum départ + arrivée
-
-  const handleEtapeChange = (index, value) => {
-    const newEtapes = [...etapes];
-    newEtapes[index] = value;
-    setEtapes(newEtapes);
-  };
-
-  const ajouterEtape = () => setEtapes([...etapes, '']);
-
-  const trajetFinal = etapes.filter(e => e.trim() !== '').join(' ➝ ');
+  // Récupérer les informations de l'utilisateur connecté
+  useEffect(() => {
+    const storedUser = JSON.parse(localStorage.getItem('userData'));
+    setUser(storedUser);  // Stocke l'utilisateur pour l'utiliser dans la requête
+  }, []);
 
   useEffect(() => {
-    axios.get('{API_URL}/api/vehicules/')
-      .then(res => setVehicules(res.data))
-      .catch(err => console.error("Erreur véhicules :", err));
+    // Charger les véhicules et chauffeurs associés à l'agence de l'utilisateur
+    if (user) {
+      axios.get(`${API_URL}/api/vehicules/?agence=${user.agence_id}`)
+        .then(res => setVehicules(res.data))
+        .catch(err => console.error("Erreur véhicules :", err));
 
-    axios.get('{API_URL}/api/chauffeurs/')
-      .then(res => setChauffeurs(res.data))
-      .catch(err => console.error("Erreur chauffeurs :", err));
-  }, []);
+      axios.get(`${API_URL}/api/chauffeurs/?agence=${user.agence_id}`)
+        .then(res => setChauffeurs(res.data))
+        .catch(err => console.error("Erreur chauffeurs :", err));
+    }
+
+    // Récupérer les dossiers associés à l'agence de l'utilisateur
+    const fetchDossiers = async () => {
+      try {
+        const response = await axios.get(`${API_URL}/api/dossiers/?agence=${user?.agence_id}`);
+        setDossiers(response.data);
+      } catch (err) {
+        console.error("Erreur récupération des dossiers :", err);
+      }
+    };
+
+    if (user) fetchDossiers();
+  }, [user]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!trajetFinal || !dateDebut || !dateFin || !vehiculeId || !chauffeurId || selectedDossiers.length === 0) {
+    if (!dateDebut || !dateFin || !vehiculeId || !chauffeurId || selectedDossiers.length === 0) {
       setMessage('Veuillez remplir tous les champs et sélectionner au moins un dossier.');
       return;
     }
 
     try {
-        
-        await
-         axios.post(
-            '{API_URL}/api/creer-fiche-mouvement/',
-            JSON.stringify({
-              dossier_references: selectedDossiers,
-              trajet: trajetFinal,
-              date_debut: dateDebut,
-              date_fin: dateFin,
-              bus_id: vehiculeId,
-              chauffeur_id: chauffeurId
-            }),
-            {
-              headers: {
-                'Content-Type': 'application/json; charset=utf-8'
-              }
-            }
-          );
-          
-          
-          
-
+      const response = await axios.post(
+        `${API_URL}/api/creer-fiche-mouvement/`,
+        JSON.stringify({
+          dossier_references: selectedDossiers,
+          trajet: 'Exemple Trajet',
+          date_debut: dateDebut,
+          date_fin: dateFin,
+          bus_id: vehiculeId,
+          chauffeur_id: chauffeurId
+        }),
+        {
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8'
+          }
+        }
+      );
       setMessage('Fiche de mouvement créée avec succès.');
-      setTimeout(() => navigate('/'), 1500);
+      setTimeout(() => {
+        navigate(`/mission/${response.data.missionId}/ajouter-ordre`);
+      }, 1500);
     } catch (err) {
       setMessage("Erreur lors de la création de la fiche.");
       console.error(err);
@@ -81,35 +86,28 @@ function FicheMouvementForm() {
   return (
     <div className="container mt-4">
       <h2 className="mb-3">Créer une Fiche de Mouvement</h2>
-
       {message && <div className="alert alert-info">{message}</div>}
 
       <div className="mb-3">
         <strong>Dossiers sélectionnés :</strong>
         <ul>
           {selectedDossiers.map(ref => (
-            <li key={ref}>{ref} / {}</li>
+            <li key={ref}>{ref}</li>
           ))}
         </ul>
       </div>
 
+      {/* Formulaire de création de fiche */}
       <form onSubmit={handleSubmit}>
         <div className="mb-3">
           <label>Trajet</label>
-          {etapes.map((etape, index) => (
-            <input
-              key={index}
-              type="text"
-              className="form-control mb-1"
-              placeholder={`Étape ${index + 1}`}
-              value={etape}
-              onChange={e => handleEtapeChange(index, e.target.value)}
-              required={index < 2} // départ et arrivée obligatoires
-            />
-          ))}
-          <button type="button" className="btn btn-sm btn-secondary mt-2" onClick={ajouterEtape}>
-            Ajouter une étape
-          </button>
+          <input
+            type="text"
+            className="form-control"
+            placeholder="Départ ➝ Arrivée"
+            value="Trajet Exemple"
+            required
+          />
         </div>
 
         <div className="mb-3">

@@ -3,7 +3,7 @@ from rest_framework.permissions import AllowAny
 from .models import AgenceVoyage, Vehicule, Chauffeur, Dossier, PreMission, Mission, OrdreMission, Touriste, Hotel
 from .serializers import (
     AgenceVoyageSerializer, VehiculeSerializer, ChauffeurSerializer, DossierSerializer,
-    PreMissionSerializer, MissionSerializer, OrdreMissionSerializer, UserSerializer
+    PreMissionSerializer, MissionSerializer, OrdreMissionSerializer, UserSerializer,HotelSerializer
 )
 from django.utils.dateparse import parse_datetime
 from django.shortcuts import get_object_or_404
@@ -23,6 +23,23 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 import requests
 from datetime import datetime
+
+from rest_framework_simplejwt.views import TokenRefreshView
+from rest_framework_simplejwt.tokens import RefreshToken
+
+# Vue pour le rafraîchissement du token
+class TokenRefresh(APIView):
+    def post(self, request, *args, **kwargs):
+        refresh_token = request.data.get('refresh')
+        if not refresh_token:
+            return Response({"error": "Refresh token is required."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            refresh = RefreshToken(refresh_token)
+            new_access_token = str(refresh.access_token)  # Nouveau token d'accès
+            return Response({"access": new_access_token}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 # Fonction utilitaire pour enrichir les infos d'hôtel via Nominatim (OpenStreetMap)
 def get_hotel_info_from_nominatim(hotel_name, country='Tunisie'):
@@ -106,34 +123,71 @@ class UserMeAPIView(APIView):
         return Response(serializer.data)
 
 
+
 class VehiculeViewSet(viewsets.ModelViewSet):
     serializer_class = VehiculeSerializer
-    permission_classes = [AllowAny]
-
-    def get_queryset(self):
-        return Vehicule.objects.all()
-
-class ChauffeurViewSet(viewsets.ModelViewSet):
-    serializer_class = ChauffeurSerializer
-    permission_classes = [AllowAny]
-
-    def get_queryset(self):
-        agence_id = self.request.query_params.get('agence')
-        if agence_id:
-            return Chauffeur.objects.filter(agence_id=agence_id)
-        return Chauffeur.objects.all()
-
-class DossierViewSet(viewsets.ModelViewSet):
-    serializer_class = DossierSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]  # Utiliser IsAuthenticated pour vérifier l'authentification
 
     def get_queryset(self):
         user = self.request.user
 
-        if hasattr(user, 'profile') and user.profile.role == 'adminagence':
+        # Si l'utilisateur est superadmin, il peut voir tous les véhicules
+        if user.profile.role == 'superadmin':
+            agence_id = self.request.query_params.get('agence')  # Si l'agence est spécifiée, on filtre par agence
+            if agence_id:
+                return Vehicule.objects.filter(agence_id=agence_id)
+            return Vehicule.objects.all()
+
+        # Si l'utilisateur est admin d'une agence, il peut voir uniquement les véhicules associés à son agence
+        if user.profile.role == 'adminagence':
+            return Vehicule.objects.filter(agence=user.profile.agence)
+
+        # Par défaut, on ne retourne aucun véhicule si le rôle de l'utilisateur n'est pas reconnu
+        return Vehicule.objects.none()
+
+
+
+class ChauffeurViewSet(viewsets.ModelViewSet):
+    serializer_class = ChauffeurSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Récupérer l'ID de l'agence à partir des paramètres de la requête
+        agence_id = self.request.query_params.get('agence')
+        
+        # Si l'agence est spécifiée, filtrer par l'ID de l'agence, sinon retourner tous les chauffeurs
+        if agence_id and agence_id != 'null':
+            return Chauffeur.objects.filter(agence_id=agence_id)
+
+        # Si aucune agence n'est spécifiée ou si l'ID est 'null', ne pas filtrer par agence
+        return Chauffeur.objects.all()
+
+
+
+class DossierViewSet(viewsets.ModelViewSet):
+    serializer_class = DossierSerializer
+    permission_classes = [IsAuthenticated]  # Assurez-vous que l'utilisateur est authentifié
+
+    def get_queryset(self):
+        user = self.request.user
+        agence_id = self.request.query_params.get('agence')  # On prend l'ID de l'agence dans les paramètres de la requête
+
+        # Si l'utilisateur est un superadmin et a sélectionné une agence, on ne retourne que les dossiers associés à l'agence
+        if user.profile.role == 'superadmin':
+            if agence_id:
+                return Dossier.objects.filter(agence_id=agence_id)  # Retourne uniquement les dossiers de l'agence sélectionnée
+            return Dossier.objects.all()  # Retourne tous les dossiers du système si aucune agence n'est sélectionnée
+
+        # Si l'utilisateur est un admin d'agence, il peut voir uniquement les dossiers de son agence
+        if user.profile.role == 'adminagence':
             return Dossier.objects.filter(agence=user.profile.agence)
 
-        return Dossier.objects.all()  # superadmin
+        return Dossier.objects.none()  # Si l'utilisateur n'a pas de rôle valide, on ne retourne aucun dossier
+
+
+
+
+
 
 class PreMissionViewSet(viewsets.ModelViewSet):
     serializer_class = PreMissionSerializer
@@ -213,7 +267,10 @@ def ordre_mission_pdf(request, ordre_id):
 
 
 
-
+class HotelViewSet(viewsets.ModelViewSet):
+    queryset = Hotel.objects.all()
+    serializer_class = HotelSerializer
+    permission_classes = [IsAuthenticated]  # Remplacez par AllowAny si nécessaire
 
 
 class ImporterDossierAPIView(APIView):
@@ -240,6 +297,11 @@ class ImporterDossierAPIView(APIView):
         fichier_excel = request.FILES.get('file')
         if not fichier_excel:
             return Response({'error': 'Aucun fichier envoyé.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Récupérer l'ID de l'agence
+        agence_id = request.data.get('agence')
+        if not agence_id:
+            return Response({'error': 'Aucune agence spécifiée.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             df = pd.read_excel(fichier_excel)
@@ -270,7 +332,7 @@ class ImporterDossierAPIView(APIView):
 
             # Recherche pays : priorité sur 'Ciudad', sinon 'Org'
             pays = None
-            for col_pays in ['Ciudad', 'pays', 'Pays', 'Org','PROVENANCE']:
+            for col_pays in ['Ciudad', 'pays', 'Pays', 'Org', 'PROVENANCE']:
                 if col_pays in df.columns and pd.notna(row.get(col_pays)):
                     pays = str(row.get(col_pays)).strip()
                     break
@@ -288,7 +350,7 @@ class ImporterDossierAPIView(APIView):
                 print(f"Ligne {index}: pas de référence valide, ligne ignorée")
                 continue
 
-  # Recherche hôtel
+            # Recherche hôtel
             hotel_nom = None
             for col_hotel in ['Hotel.1', 'Hotel', 'hotel']:
                 if col_hotel in df.columns and pd.notna(row.get(col_hotel)):
@@ -302,10 +364,7 @@ class ImporterDossierAPIView(APIView):
                 hotel.adresse = adresse
                 hotel.save()
 
-
-
-            
-            
+            # Conversion des dates
             date_val = row.get('Dia') if 'Dia' in df.columns else None
             horaire_val = None
             for col_horaire in ['HORAIRES', 'Hora', 'Horaire', 'horaire', 'Fecha Formalización']:
@@ -326,7 +385,7 @@ class ImporterDossierAPIView(APIView):
                 print(f"Ligne {index}: erreur conversion date+heure : {e}")
                 datetime_val = None
 
-            # Initialisation
+            # Initialisation des champs
             heure_arrivee = None
             heure_depart = None
             aeroport_arrivee = None
@@ -363,7 +422,7 @@ class ImporterDossierAPIView(APIView):
                 continue
 
             dossier_data = {
-                'agence': None,
+                'agence': AgenceVoyage.objects.get(id=agence_id),  # On associe l'agence ici
                 'ville': ville or "",
                 'aeroport_arrivee': aeroport_arrivee or "Aucun",
                 'num_vol_arrivee': num_vol_arrivee,
@@ -393,9 +452,9 @@ class ImporterDossierAPIView(APIView):
         return Response({'message': 'Importation terminée', 'dossiers_crees': dossiers_crees}, status=status.HTTP_200_OK)
 
 
+
 class CreerFicheMouvementAPIView(APIView):
     def post(self, request):
-        # Récupérer les données envoyées dans le body JSON
         dossier_refs = request.data.get('dossier_references', [])
         trajet = request.data.get('trajet')
         date_debut_str = request.data.get('date_debut')
@@ -424,6 +483,11 @@ class CreerFicheMouvementAPIView(APIView):
         for ref in dossier_refs:
             try:
                 dossier = Dossier.objects.get(reference=ref)
+
+                # Vérifiez que l'utilisateur a accès à ce dossier (basé sur l'agence)
+                if dossier.agence.id != request.user.profile.agence.id:
+                    continue  # Si l'agence ne correspond pas, on l'ignore
+
             except Dossier.DoesNotExist:
                 continue  # Si la référence de dossier est invalide, on l'ignore
 

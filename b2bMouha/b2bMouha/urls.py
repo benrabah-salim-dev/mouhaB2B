@@ -7,7 +7,7 @@ from b2b import views
 from b2b.views import CreerFicheMouvementAPIView
 
 from django.urls import path
-from b2b.views import LoginView
+from b2b.views import LoginView,TokenRefresh
 
 router = DefaultRouter()
 router.register(r'agences', views.AgenceVoyageViewSet, basename='agence')
@@ -17,9 +17,11 @@ router.register(r'premissions', views.PreMissionViewSet, basename='premission')
 router.register(r'missions', views.MissionViewSet, basename='mission')
 router.register(r'ordres_mission', views.OrdreMissionViewSet, basename='ordremission')
 router.register(r'dossiers', views.DossierViewSet, basename='dossier')
+router.register(r'hotels', views.HotelViewSet, basename='hotel')
 
 urlpatterns = [
-    # Django admin
+    
+    
     path('admin/', admin.site.urls),
 
     # API endpoints via ViewSets
@@ -27,8 +29,8 @@ urlpatterns = [
 
     # Authentification JWT
     path('api/login/', LoginView.as_view(), name='login'),
-    path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
-    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+   # path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+   # path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 
     # Endpoints personnalisés
     path('api/ordre-mission/<int:ordre_id>/pdf/', views.ordre_mission_pdf, name='ordre_mission_pdf'),

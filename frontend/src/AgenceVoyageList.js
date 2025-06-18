@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate , Link} from 'react-router-dom';
+import Navbar from './components/Navbar';
+
 
 function AgenceVoyageList() {
   const [agences, setAgences] = useState([]);
@@ -24,6 +26,8 @@ function AgenceVoyageList() {
   if (error) return <p style={{ color: 'red' }}>{error}</p>;
 
   return (
+    <>
+          <Navbar />
     <div className="container mt-4">
       <div className="d-flex justify-content-between align-items-center mb-3">
         <h2>Liste des agences</h2>
@@ -66,6 +70,8 @@ function AgenceVoyageList() {
         </ul>
       )}
     </div>
+    </>
+
   );
 }
 
