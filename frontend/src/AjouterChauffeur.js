@@ -1,70 +1,46 @@
-// src/AjouterChauffeur.js
-
 import React, { useState } from 'react';
 import axios from 'axios';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 
 const AjouterChauffeur = () => {
-  const { agence_id } = useParams();
+  const { agence_id } = useParams(); // Récupère l'ID de l'agence depuis l'URL
   const navigate = useNavigate();
+  const API_URL = process.env.REACT_APP_API_URL;
 
   const [nom, setNom] = useState('');
   const [prenom, setPrenom] = useState('');
   const [cin, setCin] = useState('');
   const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(false);
-  const API_URL = process.env.REACT_APP_API_URL;
 
-
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
-    const chauffeurData = {
-      nom,
-      prenom,
-      cin,
-      agence: agence_id,
-    };
+    try {
+      const newChauffeur = {
+        nom,
+        prenom,
+        cin,
+        agence: agence_id, // Envoie l'ID de l'agence
+      };
 
-    axios.post(`${API_URL}/api/chauffeurs/`, chauffeurData)
-      .then(response => {
-        setSuccess(true);
-        setError(null);
-        setTimeout(() => {
-          navigate(`/agence/${agence_id}/chauffeurs`);
-        }, 2000);
-      })
-      .catch(error => {
-        if (error.response && error.response.data) {
-          setError(JSON.stringify(error.response.data));
-        } else {
-          setError("Erreur lors de l'ajout du chauffeur. Veuillez réessayer.");
-        }
-        setSuccess(false);
-      });
+      const response = await axios.post(`${API_URL}/api/chauffeurs/`, newChauffeur);
+      navigate(`/agence/${agence_id}/ressources`); // Redirige vers la page des ressources de l'agence
+    } catch (err) {
+      console.error(err);
+      setError('Erreur lors de l\'ajout du chauffeur.');
+    }
   };
 
   return (
-    <div className="container mt-5">
-      <h2 className="mb-4">Ajouter un Chauffeur à l'agence</h2>
-
-      {success && (
-        <div className="alert alert-success" role="alert">
-          Le chauffeur a été ajouté avec succès !
-        </div>
-      )}
-
-      {error && (
-        <div className="alert alert-danger" role="alert">
-          {error}
-        </div>
-      )}
-
+    <div className="container mt-4">
+      <h2>Ajouter un chauffeur</h2>
+      {error && <p style={{ color: 'red' }}>{error}</p>}
       <form onSubmit={handleSubmit}>
         <div className="mb-3">
-          <label className="form-label">Nom</label>
+          <label htmlFor="nom" className="form-label">Nom</label>
           <input
             type="text"
+            id="nom"
             className="form-control"
             value={nom}
             onChange={(e) => setNom(e.target.value)}
@@ -73,9 +49,10 @@ const AjouterChauffeur = () => {
         </div>
 
         <div className="mb-3">
-          <label className="form-label">Prénom</label>
+          <label htmlFor="prenom" className="form-label">Prénom</label>
           <input
             type="text"
+            id="prenom"
             className="form-control"
             value={prenom}
             onChange={(e) => setPrenom(e.target.value)}
@@ -84,9 +61,10 @@ const AjouterChauffeur = () => {
         </div>
 
         <div className="mb-3">
-          <label className="form-label">CIN</label>
+          <label htmlFor="cin" className="form-label">CIN</label>
           <input
             type="text"
+            id="cin"
             className="form-control"
             value={cin}
             onChange={(e) => setCin(e.target.value)}
@@ -94,17 +72,7 @@ const AjouterChauffeur = () => {
           />
         </div>
 
-        <div className="mb-4">
-          <button type="submit" className="btn btn-primary w-100">
-            Ajouter le Chauffeur
-          </button>
-        </div>
-
-        <div className="text-center">
-          <Link to={`/agence/${agence_id}/chauffeurs`} className="btn btn-secondary">
-            Retour à la Liste des Chauffeurs
-          </Link>
-        </div>
+        <button type="submit" className="btn btn-primary">Ajouter le chauffeur</button>
       </form>
     </div>
   );

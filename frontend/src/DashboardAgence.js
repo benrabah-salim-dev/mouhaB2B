@@ -111,6 +111,7 @@ const DashboardAgence = () => {
         <h2>Dashboard de l'agence : {agence?.nom || agence_id}</h2>
 
         <div className="mb-3 d-flex gap-2">
+
           <button
             className="btn btn-primary"
             onClick={() => navigate(`/ajouter-dossier/${agence_id}`)}
@@ -129,6 +130,15 @@ const DashboardAgence = () => {
           >
             Ordres de mission
           </button>
+
+          <button
+  className="btn btn-info"
+  onClick={() => navigate(`/agence/${agence_id}/ressources`)}
+>
+  Voir les ressources de l'agence
+</button>
+
+
         </div>
 
         {/* Filtres */}

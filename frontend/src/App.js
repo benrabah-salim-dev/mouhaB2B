@@ -18,6 +18,8 @@ import FicheMouvement from './components/FicheMouvement';
 import LoginPage from './components/Login';
 import HotelList from './HotelList.js';
 import { AuthProvider } from './context/AuthContext';
+import RessourcesAgence from './RessourcesAgence.js';
+import AjouterVehicule from './AjouterVehicule.js';
 
 function App() {
   return (
@@ -31,6 +33,7 @@ function App() {
         {/* Routes privées */}
         <Route path="/dashboard/superadmin" element={<DashboardAgence />} />
         <Route path="/agence/:agence_id/dashboard" element={<DashboardAgence />} />
+        <Route path="/agence/:agence_id/ressources" element={<RessourcesAgence />} />
 
         <Route path="/agence-liste" element={<AgenceVoyageList />} />
         <Route path="/ajouter-agence" element={<AjouterAgence />} />
@@ -39,6 +42,9 @@ function App() {
         <Route path="/agence/:agence_id/chauffeurs" element={<ChauffeurList />} />
         <Route path="/ajouter-chauffeur/:agence_id" element={<AjouterChauffeur />} />
         <Route path="/ajouter-bus/:agence_id" element={<AjouterBus />} />
+        <Route path="/agence/:agence_id/ajouter-vehicule" element={<AjouterVehicule />} />
+        <Route path="/agence/:agence_id/ajouter-chauffeur" element={<AjouterChauffeur />} />
+
 
         <Route path="/ajouter-dossier/:agence_id" element={<AjouterDossier />} />
 

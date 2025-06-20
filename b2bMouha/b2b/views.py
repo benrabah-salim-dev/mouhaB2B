@@ -124,9 +124,13 @@ class UserMeAPIView(APIView):
 
 
 
+from rest_framework import serializers, viewsets
+from .models import Vehicule, AgenceVoyage
+from rest_framework.permissions import IsAuthenticated
+
 class VehiculeViewSet(viewsets.ModelViewSet):
     serializer_class = VehiculeSerializer
-    permission_classes = [IsAuthenticated]  # Utiliser IsAuthenticated pour vérifier l'authentification
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
@@ -144,6 +148,16 @@ class VehiculeViewSet(viewsets.ModelViewSet):
 
         # Par défaut, on ne retourne aucun véhicule si le rôle de l'utilisateur n'est pas reconnu
         return Vehicule.objects.none()
+
+    def perform_create(self, serializer):
+        # Récupère l'ID de l'agence à partir des données de la requête
+        agence_id = self.request.data.get('agence')  # Le champ 'agence' doit être passé dans la requête
+        if agence_id:
+            agence = AgenceVoyage.objects.get(id=agence_id)  # Trouver l'agence associée
+            serializer.save(agence=agence)  # Enregistre le véhicule avec l'agence
+        else:
+            raise serializers.ValidationError("L'ID de l'agence est requis.")  # Gère le cas où l'agence_id est manquant
+
 
 
 
