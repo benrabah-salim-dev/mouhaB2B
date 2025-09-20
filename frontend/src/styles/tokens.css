@@ -1,0 +1,30 @@
+:root {
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-text: #0f172a;
+  --color-muted: #64748b;
+  --color-primary: #2563eb;
+  --color-border: #e5e7eb;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.08);
+  --shadow-md: 0 10px 30px rgba(0,0,0,.12);
+
+  --topbar-h: 56px;
+  --sb-w: 260px;
+  --sb-w-collapsed: 78px;
+}
+
+/* Dark mode (optionnel) */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0b1020;
+    --color-surface: #0f172a;
+    --color-text: #e5e7eb;
+    --color-muted: #94a3b8;
+    --color-border: rgba(255,255,255,.08);
+  }
+}

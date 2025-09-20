@@ -1,0 +1,5 @@
+@import "./tokens.css";
+
+html, body, #root { height: 100%; }
+body { background: var(--color-bg); color: var(--color-text); }
+a { text-decoration: none; }
