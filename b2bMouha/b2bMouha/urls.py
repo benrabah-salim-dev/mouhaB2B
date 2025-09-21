@@ -10,7 +10,8 @@ from b2b.views import (
     FichesMouvementListAPIView,
     OrdreMissionViewSet,
     ordre_mission_pdf,
-    PublicResourceSearchAPIView  
+    PublicResourceSearchAPIView  ,
+    ImporterVehiculesAPIView
 )
 
 router = DefaultRouter()

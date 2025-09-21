@@ -33,6 +33,30 @@ function Modal({ title, children, onClose }) {
   );
 }
 
+function ObservationCell({ text = "", max = 60, onOpen }) {
+  if (!text) return <>—</>;
+
+  const isLong = text.length > max;
+  const preview = isLong ? text.slice(0, max).trimEnd() + "…" : text;
+
+  return (
+    <div className="d-flex align-items-center gap-2">
+      <div className="text-truncate" style={{ maxWidth: 260 }}>{preview}</div>
+      {isLong && (
+        <button
+          type="button"
+          className="btn btn-sm btn-outline-warning"
+          onClick={() => onOpen(text)}
+          title="Lire la suite"
+        >
+          Lire la suite
+        </button>
+      )}
+    </div>
+  );
+}
+
+
 /**
  * 3 modes:
  *  - my_fleet  : véhicule + chauffeur (tous deux REQUIS)
@@ -436,6 +460,8 @@ function FichesMouvementList() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedMission, setSelectedMission] = useState(null);
+  const [obsFullText, setObsFullText] = useState(null); // string | null
+
 
   const fetchList = async () => {
     setLoading(true);
@@ -527,47 +553,70 @@ function FichesMouvementList() {
       </div>
 
       <div className="table-responsive">
-        <table className="table table-striped align-middle">
-          <thead className="table-light">
-            <tr>
-              <th>Réf.</th>
-              <th>Type</th>
-              <th>Aéroport</th>
-              <th>Début</th>
-              <th>Fin</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((it) => {
-              const d1 = new Date(it.date_debut);
-              const d2 = it.date_fin ? new Date(it.date_fin) : new Date(d1.getTime() + 2 * 60 * 60 * 1000);
-              const isLocked = it.ordre_mission_genere;
+  <table className="table table-striped align-middle">
+    <thead className="table-light">
+      <tr>
+        <th>Réf.</th>
+        <th>Type</th>
+        <th>Aéroport</th>
+        <th>Début</th>
+        <th>Fin</th>
+        <th>Hôtel</th>
+        <th>Pax</th>
+        <th>Clients</th>
+        <th>Observation</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {items.map((it) => {
+        const d1 = new Date(it.date_debut);
+        const d2 = it.date_fin ? new Date(it.date_fin) : new Date(d1.getTime() + 2 * 60 * 60 * 1000);
+        const isLocked = it.ordre_mission_genere;
 
-              return (
-                <tr key={it.id} className={isLocked ? "table-secondary opacity-75" : ""}>
-                  <td>{it.reference}</td>
-                  <td><BadgeType t={it.type} /></td>
-                  <td>{it.aeroport}</td>
-                  <td>{fmtHour(d1)}</td>
-                  <td>{fmtHour(d2)}</td>
-                  <td>
-                    {!isLocked ? (
-                      <button className="btn btn-sm btn-success" onClick={() => setSelectedMission(it)}>
-                        📄 Choisir ressources
-                      </button>
-                    ) : (
-                      <button className="btn btn-sm btn-outline-danger" onClick={() => deleteOM(it)}>
-                        ❌ Supprimer OM
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+        return (
+          <tr key={it.id} className={isLocked ? "table-secondary opacity-75" : ""}>
+            <td>{it.reference}</td>
+            <td><BadgeType t={it.type} /></td>
+            <td>{it.aeroport}</td>
+            <td>{fmtHour(d1)}</td>
+            <td>{fmtHour(d2)}</td>
+            <td>{it.hotel || "—"}</td>
+            <td>{it.pax ?? "—"}</td>
+            <td>{it.clients || "—"}</td>
+            <td>
+  <ObservationCell text={it.observation} max={60} onOpen={setObsFullText} />
+</td>
+
+            <td>
+              {!isLocked ? (
+                <button className="btn btn-sm btn-success" onClick={() => setSelectedMission(it)}>
+                  📄 Choisir ressources
+                </button>
+              ) : (
+                <button className="btn btn-sm btn-outline-danger" onClick={() => deleteOM(it)}>
+                  ❌ Supprimer OM
+                </button>
+              )}
+            </td>
+          </tr>
+        );
+      })}
+    </tbody>
+    {obsFullText && (
+  <Modal title="Observation complète" onClose={() => setObsFullText(null)}>
+    <div className="alert alert-warning">
+      <strong>Attention :</strong> contenu long — vérifiez les détails avant validation.
+    </div>
+    <div style={{ whiteSpace: "pre-wrap" }}>{obsFullText}</div>
+    <div className="text-end mt-3">
+      <button className="btn btn-warning" onClick={() => setObsFullText(null)}>Fermer</button>
+    </div>
+  </Modal>
+)}
+
+  </table>
+</div>
 
       {selectedMission && (
         <ModalAssignResources

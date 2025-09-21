@@ -392,22 +392,25 @@ def parse_excel_datetime(date_val, time_val=None):
     except Exception:
         return None
 
-# =========================
-# Import Dossiers (Excel)
+ #=========================
+# Import Dossiers (Excel) — version améliorée (détection "nom de réservation")
 # =========================
 
 class ImporterDossierAPIView(APIView):
     parser_classes = [MultiPartParser]
     permission_classes = [AllowAny]
 
+    # -------------------------
+    # Utils "header" & strings
+    # -------------------------
     @staticmethod
     def _norm_header(s: str) -> str:
         if s is None:
             return ""
         s = str(s).strip().lower()
         s = unicodedata.normalize("NFD", s)
-        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-        s = re.sub(r"[^a-z0-9]+", "", s)
+        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")  # supprime accents
+        s = re.sub(r"[^a-z0-9]+", "", s)  # garde lettres/chiffres
         return s
 
     @staticmethod
@@ -415,17 +418,30 @@ class ImporterDossierAPIView(APIView):
         if val is None or (isinstance(val, float) and pd.isna(val)):
             return None
         s = str(val).strip()
-        if s.lower() in {"", "nan", "none", "null"}:
+        if s.lower() in {"", "nan", "none", "null", "-"}:
             return None
+        # 123.0 => 123
         if re.fullmatch(r"\d+\.0", s):
             s = s[:-2]
         return s or None
 
+    @staticmethod
+    def _first_nonempty_str(*vals: Any) -> Optional[str]:
+        for v in vals:
+            s = ImporterDossierAPIView._first_str(v)
+            if s:
+                return s
+        return None
+
     def _find_col(self, df: pd.DataFrame, *keyword_groups: List[str], prefer: Optional[str] = None) -> Optional[str]:
+        """Trouve une colonne dont l'en-tête normalisé matche l'un des mots clés.
+        Essaye d'abord l'égalité stricte, puis la recherche 'contient'."""
         norm_map: Dict[str, List[str]] = {}
         for c in df.columns:
             norm = self._norm_header(c)
             norm_map.setdefault(norm, []).append(c)
+
+        # recherche stricte
         for group in keyword_groups:
             for k in group:
                 k_norm = self._norm_header(k)
@@ -434,6 +450,8 @@ class ImporterDossierAPIView(APIView):
                     if prefer and prefer in cols:
                         return prefer
                     return cols[0]
+
+        # recherche partielle
         for group in keyword_groups:
             for k in group:
                 k_norm = self._norm_header(k)
@@ -444,12 +462,23 @@ class ImporterDossierAPIView(APIView):
                     return candidates[0]
         return None
 
+    def _find_cols_any(self, df: pd.DataFrame, *keywords: str) -> List[str]:
+        """Retourne toutes les colonnes dont le header normalisé matche au moins un keyword (en contient)."""
+        want = {self._norm_header(k) for k in keywords}
+        results = []
+        for col in df.columns:
+            n = self._norm_header(col)
+            if any(w in n for w in want):
+                results.append(col)
+        return results
+
     def _pick_hotel_col(self, df: pd.DataFrame) -> Optional[str]:
         candidates = [c for c in df.columns if "hotel" in self._norm_header(c)]
         if not candidates:
             return None
         if len(candidates) == 1:
             return candidates[0]
+        # heuristique: privilégie une colonne avec du texte (noms d'hôtels)
         best_col, best_score = candidates[0], -1
         for col in candidates:
             ser = df[col].dropna().astype(str).head(50)
@@ -462,6 +491,7 @@ class ImporterDossierAPIView(APIView):
     def _clean_time_cell(v: Any) -> Optional[str]:
         if v is None or (isinstance(v, float) and pd.isna(v)):
             return None
+        # Excel time fraction
         if isinstance(v, (int, float)) and 0 <= float(v) < 1:
             base = datetime(1899, 12, 30) + timedelta(days=float(v))
             return base.strftime("%H:%M")
@@ -507,6 +537,118 @@ class ImporterDossierAPIView(APIView):
             py = timezone.make_aware(py)
         return py
 
+    # -------------------------
+    # Extraction "Nom de réservation" robuste
+    # -------------------------
+    def _extract_nom_reservation(self, df: pd.DataFrame, row: pd.Series) -> Optional[str]:
+        """
+        Essaie plusieurs colonnes possibles *à la ligne* :
+        - 'nom réservation', 'nom reservation', 'reservation', 'booking name',
+          'titular(e)', 'groupe', 'group', 'party name', 'holder', 'client', etc.
+        - compose à partir de (nom, prénom) si présent.
+        - retourne le premier texte non vide et propre.
+        """
+        # 1) liste élargie de synonymes (on matche "contient")
+        candidates_headers = self._find_cols_any(
+            df,
+            "nomreservation", "nomresa", "reservation", "booking", "bookingname",
+            "groupe", "group", "party", "partyname",
+            "titular", "titulaire", "holder", "client", "clients",
+            "lead", "leadname", "contact", "passager", "passengers", "paxnames", "pax"
+        )
+
+        # 2) lecture des valeurs non vides dans l'ordre
+        values = []
+        for col in candidates_headers:
+            val = self._first_str(row.get(col))
+            if val:
+                values.append(val)
+
+        # 3) si rien, essaie de composer Nom + Prénom
+        #    (en cherchant entêtes plausibles pour nom/prénom)
+        if not values:
+            last_name_cols = self._find_cols_any(df, "nom", "lastname", "last_name", "surname")
+            first_name_cols = self._find_cols_any(df, "prenom", "firstname", "first_name", "givenname")
+            ln = None
+            fn = None
+            for col in last_name_cols:
+                ln = self._first_str(row.get(col))
+                if ln:
+                    break
+            for col in first_name_cols:
+                fn = self._first_str(row.get(col))
+                if fn:
+                    break
+            combined = " ".join([fn or "", ln or ""]).strip()
+            if combined:
+                values.append(combined)
+
+        # 4) nettoie et retourne le premier non vide
+        for v in values:
+            s = re.sub(r"\s+", " ", v).strip()
+            if s and s.lower() not in {"nan", "none", "null", "-"}:
+                return s
+        return None
+
+    # -------------------------
+    # Observations multi-colonnes
+    # -------------------------
+    def _collect_observations(self, df: pd.DataFrame, row: pd.Series) -> str:
+        obs_exact_norms = {
+            "observation", "observations", "observatio", "observ", "obs",
+            "remark", "remarks", "remarque", "remarques",
+            "note", "notes", "comment", "comments", "commentaire", "commentaires",
+            "coment", "coments", "comentario", "comentarios"
+        }
+        obs_num_re = re.compile(
+            r"^(obs|observ|observation|observations|observatio|remark|remarks|remarque|remarques|"
+            r"note|notes|comment|comments|commentaire|commentaires|coment|coments|comentario|comentarios)\d+$"
+        )
+
+        cols = list(df.columns)
+        norm_map: Dict[str, List[str]] = {}
+        for c in cols:
+            norm_map.setdefault(self._norm_header(c), []).append(c)
+
+        obs_cols_set = set()
+        for n, originals in norm_map.items():
+            if n in obs_exact_norms:
+                obs_cols_set.update(originals)
+        for n, originals in norm_map.items():
+            if obs_num_re.match(n):
+                obs_cols_set.update(originals)
+        if not obs_cols_set:
+            for n, originals in norm_map.items():
+                if any(k in n for k in obs_exact_norms):
+                    obs_cols_set.update(originals)
+
+        obs_cols = [c for c in cols if c in obs_cols_set]
+
+        def _is_meaningful_obs(val) -> bool:
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                return False
+            s = str(val).strip()
+            return bool(s) and s.lower() not in {"0", "0.0", "nan", "none", "null", "-"}
+
+        def _clean_obs_text(s: str) -> str:
+            s = str(s).replace("\r", " ").replace("\n", " ")
+            s = s.replace("T#", " ").replace("#", " ")
+            s = re.sub(r"\s+", " ", s).strip()
+            return s
+
+        pieces, seen = [], set()
+        for c in obs_cols:
+            raw = row.get(c)
+            if _is_meaningful_obs(raw):
+                txt = _clean_obs_text(self._first_str(raw) or "")
+                if txt and txt not in seen:
+                    seen.add(txt)
+                    pieces.append(txt)
+        return " | ".join(pieces)
+
+    # -------------------------
+    # POST
+    # -------------------------
     def post(self, request):
         fichier = request.FILES.get("file")
         agence_id = request.data.get("agence")
@@ -526,74 +668,42 @@ class ImporterDossierAPIView(APIView):
 
         cols = list(df.columns)
 
+        # --- helpers de recherche colonne (avec fallback fuzzy find_best_match si tu l'as déjà)
         def choose_col(keywords, prefer=None):
             col = self._find_col(df, keywords, prefer=prefer)
             if col:
                 return col
-            return find_best_match(keywords, cols, min_score=0.30)
+            # fallback si tu as une fonction find_best_match disponible dans ton projet
+            try:
+                return find_best_match(keywords, cols, min_score=0.30)  # noqa
+            except Exception:
+                return None
 
+        # Références
         col_ref_to   = choose_col(["Ref.T.O.", "Ref TO", "RefTO", "RefTO.", "Ref T.O.", "Ref T O", "Ref_T_O"])
         col_ntra_ref = choose_col(["Ntra.Ref", "NtraRef", "Ntra Ref", "Ntra"])
         col_ref_alt  = choose_col(["Reference", "Référence", "Ref", "REF"])
         col_ref      = col_ref_to or col_ntra_ref or col_ref_alt
 
+        # Datetime
         col_day  = choose_col(["Dia", "DATE", "Date", "Fecha", "Jour", "Data"])
         col_time = choose_col(["Hora", "Horaires", "Horaire", "Heure", "Time", "Horas"])
+
+        # Vol / orig / dest / type
         col_vol = choose_col(["Vuelo", "Vol", "Flight", "N° VOL", "N VOL", "Nº VOL"])
         col_org = choose_col(["Org", "Provenance", "Orig", "From"])
         col_dst = choose_col(["Dst", "Destination", "To"])
         col_ls  = choose_col(["L/S", "LS", "D/A", "A/D", "DA", "AD", "Type Mouvement", "Type", "Mouvement"])
 
+        # Infos diverses
         col_city  = choose_col(["Ciudad", "Ville", "City", "Localite", "Localité"])
         col_pax   = choose_col(["Pax", "PAX", "Passengers", "Adultes", "Adultos"])
+        # ancien "nom" (on garde mais on le traitera avec la méthode robuste)
         col_name  = choose_col(["Titular", "Titulaire", "Nom", "Name", "Holder", "Client"])
         col_to    = choose_col(["T.O.", "TO", "Client TO", "CLIENT/ TO", "CLIENT TO",
                                 "Client/ TO", "Tour Operateur", "Tour Opérateur",
                                 "Tour Operador", "Tour Operator"])
         col_hotel = self._pick_hotel_col(df)
-
-        obs_exact_norms = {
-            "observation", "observations", "observatio", "observ", "obs",
-            "remark", "remarks", "remarque", "remarques",
-            "note", "notes", "comment", "comments", "commentaire", "commentaires",
-            "coment", "coments", "comentario", "comentarios"
-        }
-        obs_num_re = re.compile(
-            r"^(obs|observ|observation|observations|observatio|remark|remarks|remarque|remarques|"
-            r"note|notes|comment|comments|commentaire|commentaires|coment|coments|comentario|comentarios)\d+$"
-        )
-        norm_map: Dict[str, List[str]] = {}
-        for c in cols:
-            norm_map.setdefault(self._norm_header(c), []).append(c)
-        obs_cols_set = set()
-        for n, originals in norm_map.items():
-            if n in obs_exact_norms:
-                obs_cols_set.update(originals)
-        for n, originals in norm_map.items():
-            if obs_num_re.match(n):
-                obs_cols_set.update(originals)
-        if not obs_cols_set:
-            for n, originals in norm_map.items():
-                if any(k in n for k in obs_exact_norms):
-                    obs_cols_set.update(originals)
-        if not obs_cols_set:
-            for kw in (["Observation","Observations","OBSERVATIO"],["Comment","Comments","Coment1"],["Note","Notes"],["Remark","Remarks"]):
-                c = find_best_match(kw, cols, min_score=0.30)
-                if c:
-                    obs_cols_set.add(c)
-        obs_cols = [c for c in cols if c in obs_cols_set]
-
-        def _is_meaningful_obs(val) -> bool:
-            if val is None or (isinstance(val, float) and pd.isna(val)):
-                return False
-            s = str(val).strip()
-            return bool(s) and s.lower() not in {"0", "0.0", "nan", "none", "null", "-"}
-
-        def _clean_obs_text(s: str) -> str:
-            s = str(s).replace("\r", " ").replace("\n", " ")
-            s = s.replace("T#", " ").replace("#", " ")
-            s = re.sub(r"\s+", " ", s).strip()
-            return s
 
         dossiers_crees: List[str] = []
         dossiers_mis_a_jour: List[str] = []
@@ -601,6 +711,7 @@ class ImporterDossierAPIView(APIView):
         ui_rows: List[Dict[str, Any]] = []
 
         for idx, row in df.iterrows():
+            # ---- Référence obligatoire
             ref = None
             if col_ref:
                 ref = self._first_str(row.get(col_ref))
@@ -608,10 +719,13 @@ class ImporterDossierAPIView(APIView):
                 ref = self._first_str(row.get(col_ref_to))
             if (not ref) and col_ntra_ref:
                 ref = self._first_str(row.get(col_ntra_ref))
+            if (not ref) and col_ref_alt:
+                ref = self._first_str(row.get(col_ref_alt))
             if not ref:
                 lignes_ignorees.append({"ligne": idx + 2, "raison": "Référence manquante"})
                 continue
 
+            # ---- Datetime / sens
             day_val  = row.get(col_day)  if col_day  else None
             time_val = row.get(col_time) if col_time else None
             dt = self._combine_datetime(day_val, time_val)
@@ -628,14 +742,24 @@ class ImporterDossierAPIView(APIView):
 
             vol = self._first_str(row.get(col_vol)) if col_vol else ""
             ville = self._first_str(row.get(col_city)) if col_city else ""
+
+            # PAX
             pax_raw = self._first_str(row.get(col_pax)) if col_pax else None
             try:
                 pax = int(float(pax_raw)) if pax_raw is not None else 0
             except Exception:
                 pax = 0
-            nom_resa = self._first_str(row.get(col_name)) if col_name else ""
+
+            # ---- NOM DE RÉSERVATION (robuste)
+            nom_resa = self._extract_nom_reservation(df, row)
+            # si toujours vide, dernier fallback : l'ancienne colonne "name"
+            if not nom_resa and col_name:
+                nom_resa = self._first_str(row.get(col_name)) or ""
+
+            # Tour opérateur
             tour_op  = self._first_str(row.get(col_to)) if col_to else ""
 
+            # Hôtel (création si inconnu)
             hotel_nom = self._first_str(row.get(col_hotel)) if col_hotel else None
             hotel_obj = None
             if hotel_nom:
@@ -643,6 +767,7 @@ class ImporterDossierAPIView(APIView):
                 if not hotel_obj:
                     hotel_obj = Hotel.objects.create(nom=hotel_nom)
 
+            # Répartition arrivée/départ
             heure_arrivee = heure_depart = None
             num_vol_arrivee = num_vol_retour = ""
             if type_code == "A":
@@ -650,26 +775,16 @@ class ImporterDossierAPIView(APIView):
             elif type_code == "D":
                 heure_depart, num_vol_retour = dt, (vol or "")
             else:
+                # heuristique si non précisé
                 if org and not dst:
                     heure_depart, num_vol_retour = dt, (vol or "")
                 else:
                     heure_arrivee, num_vol_arrivee = dt, (vol or "")
 
-            obs_pieces = []
-            for c in obs_cols:
-                raw = row.get(c)
-                if _is_meaningful_obs(raw):
-                    txt = _clean_obs_text(self._first_str(raw) or "")
-                    if txt:
-                        obs_pieces.append(txt)
-            seen_vals = set()
-            obs_joined_list = []
-            for p in obs_pieces:
-                if p not in seen_vals:
-                    seen_vals.add(p)
-                    obs_joined_list.append(p)
-            obs_joined = " | ".join(obs_joined_list)
+            # Observations multi-colonnes consolidées
+            obs_joined = self._collect_observations(df, row)
 
+            # ---- Enregistrement base
             data = {
                 "agence": agence,
                 "ville": ville or "",
@@ -690,6 +805,7 @@ class ImporterDossierAPIView(APIView):
             obj, created = Dossier.objects.update_or_create(reference=ref, defaults=data)
             (dossiers_crees if created else dossiers_mis_a_jour).append(ref)
 
+            # ---- Payload UI (normalisé pour ton front)
             ui_rows.append({
                 "id": obj.id,
                 "reference": obj.reference,
@@ -705,7 +821,9 @@ class ImporterDossierAPIView(APIView):
                 "nombre_personnes_retour": obj.nombre_personnes_retour,
                 "tour_operateur": obj.tour_operateur or "",
                 "_to": obj.tour_operateur or "",
+                # >>> normalisation clients pour le tableau React
                 "nom_reservation": obj.nom_reservation or "",
+                "clients": obj.nom_reservation or "",   # <— clé supplémentaire pour le front
                 "observation": obj.observation or "",
             })
 
@@ -719,6 +837,7 @@ class ImporterDossierAPIView(APIView):
             },
             status=200,
         )
+
 
 # =========================
 # Import Véhicules (Excel simple)
@@ -1340,7 +1459,6 @@ class CreerFicheMouvementAPIView(APIView):
 # =========================
 # Liste Fiches Mouvement (items “plats” côté UI)
 # =========================
-
 class FichesMouvementListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1361,12 +1479,49 @@ class FichesMouvementListAPIView(APIView):
             pass
         return getattr(mission, "reference", None)
 
+    def _first_nonempty(self, *vals):
+        for v in vals:
+            if v is None:
+                continue
+            s = str(v).strip()
+            if s and s.lower() not in {"nan", "none", "null", "-"}:
+                return s
+        return None
+
+    def _format_clients(self, dossier):
+        """
+        Normalise l'affichage des clients à partir du dossier.
+        Source principale : dossier.nom_reservation
+        Fallbacks (si jamais tu ajoutes ces champs plus tard) : nom, name, titulaire, titular, clients
+        """
+        if not dossier:
+            return ""
+        raw = self._first_nonempty(
+            getattr(dossier, "nom_reservation", None),
+            getattr(dossier, "nom", None),
+            getattr(dossier, "name", None),
+            getattr(dossier, "titulaire", None),
+            getattr(dossier, "titular", None),
+            getattr(dossier, "clients", None),
+        )
+        if not raw:
+            return ""
+        # nettoyage léger (espaces multiples, retours ligne)
+        raw = re.sub(r"\s+", " ", str(raw)).strip()
+        return raw
+
     def get(self, request):
         qs = (
             Mission.objects.all()
             .select_related("premission", "premission__dossier", "premission__dossier__hotel")
-            .prefetch_related(Prefetch("ordres_mission", queryset=OrdreMission.objects.select_related("vehicule", "chauffeur")))
+            .prefetch_related(
+                Prefetch(
+                    "ordres_mission",
+                    queryset=OrdreMission.objects.select_related("vehicule", "chauffeur")
+                )
+            )
         )
+
         role = _user_role(request.user)
         if role == "adminagence":
             qs = qs.filter(premission__agence=_user_agence(request.user))
@@ -1389,6 +1544,7 @@ class FichesMouvementListAPIView(APIView):
                 | Q(ordres_mission__vehicule__immatriculation__icontains=search)
                 | Q(ordres_mission__chauffeur__nom__icontains=search)
                 | Q(ordres_mission__chauffeur__prenom__icontains=search)
+                | Q(premission__dossier__nom_reservation__icontains=search)  # <— recherche aussi par client
             ).distinct()
 
         if date_from:
@@ -1409,8 +1565,10 @@ class FichesMouvementListAPIView(APIView):
             pre = getattr(m, "premission", None)
             dossier = getattr(pre, "dossier", None) if pre else None
             ordre = m.ordres_mission.all().first()
+
             t = self._infer_type(dossier) if dossier else None
             apt = dossier.aeroport_arrivee if (dossier and t == "A") else dossier.aeroport_depart if (dossier and t == "D") else None
+
             if type_code in ("A", "D") and t != type_code:
                 continue
             if aeroport_filter and (apt or "").strip().upper() != aeroport_filter:
@@ -1420,6 +1578,7 @@ class FichesMouvementListAPIView(APIView):
             hotel_name = getattr(getattr(dossier, "hotel", None), "nom", "") if dossier else ""
             ref_display = self._display_reference(m)
             obs = (getattr(dossier, "observation", "") or "").strip()
+            clients_disp = self._format_clients(dossier)  # <— NOUVEAU
 
             rows.append(
                 {
@@ -1445,6 +1604,7 @@ class FichesMouvementListAPIView(APIView):
                     ) if dossier else None,
                     "created_at": getattr(pre, "date_creation", None) if pre else None,
                     "observation": obs,
+                    "clients": clients_disp,  # <— NOUVEAU CHAMP POUR LE FRONT
                 }
             )
 
@@ -1460,6 +1620,7 @@ class FichesMouvementListAPIView(APIView):
             },
             status=200,
         )
+
 
 # =========================
 # Fiche Mouvement CRUD
