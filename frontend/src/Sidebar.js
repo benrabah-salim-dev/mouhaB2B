@@ -8,6 +8,7 @@ import {
   FaSignOutAlt,
   FaHome,
   FaSyncAlt,
+  FaMapMarkedAlt
 } from "react-icons/fa";
 
 function SidebarLink({ to, icon, children }) {
@@ -63,23 +64,32 @@ const Sidebar = ({ agenceId, onRefresh, refreshing, onLogout, agenceNom, role })
       </div>
 
       {/* Menu */}
-      <nav className="mt-2" style={{ rowGap: 8, display: "grid" }}>
-        <SidebarLink to={`/agence/${agenceId}/dossiers`} icon={<FaFileImport />}>
-          Dossiers
-        </SidebarLink>
-        <SidebarLink to={`/agence/${agenceId}/ressources`} icon={<FaUsers />}>
-          Ressources
-        </SidebarLink>
-        <SidebarLink to={`/agence/${agenceId}/fiches-mouvement`} icon={<FaCar />}>
-          Fiches de mouvement
-        </SidebarLink>
-        <SidebarLink to={`/agence/${agenceId}/fiche-mouvement`} icon={<FaCar />}>
-          Créer fiche de mouvement
-        </SidebarLink>
-        <SidebarLink to={`/ordres-mission`} icon={<FaCar />}>
-          Ordres de Mission
-        </SidebarLink>
-      </nav>
+    <nav className="mt-2" style={{ rowGap: 8, display: "grid" }}>
+  <SidebarLink to={`/agence/${agenceId}/dossiers`} icon={<FaFileImport />}>
+    Dossiers
+  </SidebarLink>
+  <SidebarLink to={`/agence/${agenceId}/ressources`} icon={<FaUsers />}>
+    Ressources
+  </SidebarLink>
+
+  {/* Nouveau bouton Mes excursions */}
+  <SidebarLink to={`/agence/${agenceId}/mes-excursions`} icon={<FaMapMarkedAlt />}>
+    Mes excursions
+  </SidebarLink>
+
+  <SidebarLink to={`/agence/${agenceId}/fiches-mouvement`} icon={<FaCar />}>
+    Fiches de mouvement
+  </SidebarLink>
+  <SidebarLink to={`/agence/${agenceId}/fiche-mouvement`} icon={<FaCar />}>
+    Créer fiche de mouvement
+  </SidebarLink>
+  <SidebarLink to={`/ordres-mission`} icon={<FaCar />}>
+    Ordres de Mission
+  </SidebarLink>
+</nav>
+
+
+      
 
       {/* Boutons bas */}
       <div className="mt-auto">

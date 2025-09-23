@@ -1,35 +1,23 @@
 // src/components/FicheMouvement.js
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useContext } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import api from "../api";
-import Sidebar from "../Sidebar";
 import { AuthContext } from "../context/AuthContext";
-import { useContext } from "react";
-
 
 /* =========================================================
    Helpers
 ========================================================= */
-
-const safeDate = (v) => {
-  try {
-    const d = new Date(v);
-    return isNaN(d.getTime()) ? null : d;
-  } catch {
-    return null;
-  }
-};
+const safeDate = (v) => { try { const d = new Date(v); return isNaN(d.getTime()) ? null : d; } catch { return null; } };
 const normalizeDA = (val) => {
   if (!val) return null;
   const v = String(val).trim().toUpperCase();
-  if (["D", "DEPART", "DEPARTURE", "S", "SALIDA", "P", "PARTENZA"].includes(v)) return "D";
-  if (["A", "ARRIVEE", "ARRIVAL", "LLEGADA", "L"].includes(v)) return "A";
+  if (["D","DEPART","DEPARTURE","S","SALIDA","P","PARTENZA"].includes(v)) return "D";
+  if (["A","ARRIVEE","ARRIVAL","LLEGADA","L"].includes(v)) return "A";
   return null;
 };
 const deriveType = (d) => {
   if (!d || typeof d !== "object") return null;
-  const hasDepart = !!d.heure_depart;
-  const hasArrivee = !!d.heure_arrivee;
+  const hasDepart = !!d.heure_depart, hasArrivee = !!d.heure_arrivee;
   if (hasDepart && !hasArrivee) return "D";
   if (!hasDepart && hasArrivee) return "A";
   return normalizeDA(d._type || d.type || d.da);
@@ -38,85 +26,65 @@ const labelType = (t) => (t === "D" ? "Départ" : t === "A" ? "Arrivée" : "");
 const getDateKey = (d) => {
   if (!d || typeof d !== "object") return "";
   const dtStr = d.heure_depart || d.heure_arrivee;
-  if (!dtStr) return "";
-  const dt = safeDate(dtStr);
+  const dt = dtStr ? safeDate(dtStr) : null;
   if (!dt) return "";
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, "0");
-  const day = String(dt.getDate()).padStart(2, "0");
+  const y = dt.getFullYear(), m = String(dt.getMonth()+1).padStart(2,"0"), day = String(dt.getDate()).padStart(2,"0");
   return `${y}-${m}-${day}`;
 };
 const pickTO = (d) => {
   if (!d || typeof d !== "object") return "";
   if (d._to) return String(d._to).trim();
-  const to =
-    d.tour_operateur ??
-    d.to ??
-    d.t_o ??
-    d.TO ??
-    d["T.O."] ??
-    d["CLIENT/ TO"] ??
-    d.client_to ??
-    "";
+  const to = d.tour_operateur ?? d.to ?? d.t_o ?? d.TO ?? d["T.O."] ?? d["CLIENT/ TO"] ?? d.client_to ?? "";
   return String(to || "").trim();
 };
 const pickRefTO = (d) => {
   if (!d || typeof d !== "object") return "";
   if (d._ref_to) return String(d._ref_to).trim();
-  const rto =
-    d.ref_to ??
-    d.ref_t_o ??
-    d["Ref.T.O."] ??
-    d.reference_to ??
-    d["REF T.O"] ??
-    d["Ref TO"] ??
-    d["Ntra.Ref"] ??
-    "";
+  const rto = d.ref_to ?? d.ref_t_o ?? d["Ref.T.O."] ?? d.reference_to ?? d["REF T.O"] ?? d["Ref TO"] ?? d["Ntra.Ref"] ?? "";
   return String(rto || "").trim();
 };
-const normalizeRows = (rows) =>
-  rows.map((d) => {
-    const _type = deriveType(d);
-    const _to = d?._to ?? pickTO(d);
-    const _ref_to = d?._ref_to ?? pickRefTO(d);
-    return { ...d, _type, _to, _ref_to };
-  });
-
-const formatShortTime = (iso) => {
-  const d = safeDate(iso);
-  if (!d) return "";
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-};
+const formatShortTime = (iso) => { const d = safeDate(iso); return d ? d.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" }) : ""; };
 const getFlightNo = (d, t) => {
   if (!d) return "";
   if (t === "A") return d.num_vol_arrivee || d.num_vol || d.vol || "";
   if (t === "D") return d.num_vol_retour || d.num_vol || d.vol || "";
   return d.num_vol_arrivee || d.num_vol_retour || d.num_vol || d.vol || "";
 };
-const getFlightTime = (d, t) => {
-  if (t === "A") return d.heure_arrivee || "";
-  if (t === "D") return d.heure_depart || "";
-  return d.heure_arrivee || d.heure_depart || "";
-};
-const getPaxForType = (d, t) => {
-  if (t === "A") return Number(d.nombre_personnes_arrivee || 0);
-  if (t === "D") return Number(d.nombre_personnes_retour || 0);
-  return Number(d.nombre_personnes_arrivee || 0) + Number(d.nombre_personnes_retour || 0);
-};
+const getFlightTime = (d, t) => (t === "A" ? d.heure_arrivee || "" : t === "D" ? d.heure_depart || "" : d.heure_arrivee || d.heure_depart || "");
+const getPaxForType = (d, t) => (t === "A" ? Number(d.nombre_personnes_arrivee || 0) : t === "D" ? Number(d.nombre_personnes_retour || 0) : Number(d.nombre_personnes_arrivee || 0) + Number(d.nombre_personnes_retour || 0));
+const getPaxDisplay = (d, t) => `${getPaxForType(d, t)} pax`;
 const formatRefFromDateKey = (dateKey) => (dateKey ? `M_${dateKey}` : null);
-const pickObservation = (d) =>
-  String(
-    d.observation ??
-      d.observations ??
-      d.observ ??
-      d.remarque ??
-      d.note ??
-      d.notes ??
-      ""
-  ).trim();
+const normalizeRows = (rows) => rows.map((d) => ({ ...d, _type: deriveType(d), _to: d?._to ?? pickTO(d), _ref_to: d?._ref_to ?? pickRefTO(d) }));
+const rowKeyOf = (r, i) => String(r?.id ?? r?.reference ?? `row_${i}`);
+
+// Heuristique affichage noms pax
+const getPassengerLabel = (row, t) => {
+  const candidates = [
+    row.pax_names, row.passengers, row.passagers, row.noms, row.names, row.clients_list, row.clients, row.client_names, row.liste_noms
+  ];
+  for (const c of candidates) {
+    if (!c) continue;
+    if (Array.isArray(c) && c.length) return c.join(", ");
+    if (typeof c === "string" && c.trim()) return c.trim();
+  }
+  const pax = getPaxForType(row, t);
+  if (pax > 1) return `PAX × ${pax}`;
+  const nom = row.nom || row.last_name || "";
+  const prenom = row.prenom || row.first_name || "";
+  const full = `${prenom} ${nom}`.trim();
+  return full || "PAX × 1";
+};
+
+// Format pour résumé : montre jusqu’à 3 noms puis +N
+const summarizeList = (arr = []) => {
+  const cleaned = arr.map((s) => String(s || "").trim()).filter(Boolean);
+  if (!cleaned.length) return "—";
+  if (cleaned.length <= 3) return cleaned.join(", ");
+  return `${cleaned.slice(0, 3).join(", ")} +${cleaned.length - 3}`;
+};
 
 /* =========================================================
-   Composants UI simples
+   Petits composants
 ========================================================= */
 function Section({ title, disabled, children, right }) {
   return (
@@ -132,14 +100,74 @@ function Section({ title, disabled, children, right }) {
 }
 function Chip({ active, children, onClick, title }) {
   return (
-    <button
-      type="button"
-      className={`fm-chip ${active ? "is-active" : ""}`}
-      onClick={onClick}
-      title={title || ""}
-    >
+    <button type="button" className={`fm-chip ${active ? "is-active" : ""}`} onClick={onClick} title={title || ""}>
       {children}
     </button>
+  );
+}
+
+function TopSummaryBar({
+  tCode, dateSel, airportSel, flightsSel, tosSel, villesSel, hotelsSel,
+  selectedCount, selectedPax, movementName, setMovementName, onCreate, creating,
+  obsCount = 0
+}) {
+  const joinFull = (arr=[]) => arr.map(s => String(s||"").trim()).filter(Boolean);
+  const titleJoin = (arr) => joinFull(arr).join(", ");
+
+  const KV = ({ label, value, title, danger }) => (
+    <div className={`kv ${danger ? "kv-danger" : ""}`}>
+      <div className="kv-label">{label}</div>
+      <div className="kv-value" title={title}>{value || "—"}</div>
+    </div>
+  );
+
+  return (
+    <div className="fm-top-summary improved">
+      <div className="fm-top-summary-grid">
+        <KV label="Type" value={tCode ? labelType(tCode) : "—"} />
+        <KV label="Date" value={dateSel} />
+        <KV label="Aéroport" value={airportSel} />
+
+        <KV label="Vols" value={joinFull(flightsSel).join(" · ")} title={titleJoin(flightsSel)} />
+        <KV label="TO" value={joinFull(tosSel).join(" · ")} title={titleJoin(tosSel)} />
+        <KV label="Zones" value={joinFull(villesSel).join(" · ")} title={titleJoin(villesSel)} />
+        <KV label="Hôtels" value={joinFull(hotelsSel).join(" · ")} title={titleJoin(hotelsSel)} />
+
+        <KV
+          label="Observations"
+          value={obsCount > 0 ? `⚠️ ${obsCount}` : "Sans obs"}
+          danger={obsCount > 0}
+        />
+
+        <div className="kv kpi">
+          <div className="kpi-pair">
+            <div className="kpi-num" aria-label="dossiers">{selectedCount}</div>
+            <div className="kpi-label">dossiers</div>
+          </div>
+          <div className="kpi-sep" />
+          <div className="kpi-pair">
+            <div className="kpi-num" aria-label="pax">{selectedPax}</div>
+            <div className="kpi-label">pax</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="fm-top-summary-actions">
+        <input
+          className="form-control form-control-sm"
+          placeholder={
+            tCode && dateSel && airportSel
+              ? `${labelType(tCode)} ${airportSel} ${dateSel}`
+              : "Nom de la fiche (optionnel)"
+          }
+          value={movementName}
+          onChange={(e) => setMovementName(e.target.value)}
+        />
+        <button className="btn btn-success btn-sm" onClick={onCreate} disabled={creating || !selectedCount}>
+          {creating ? "Création..." : `Créer (${selectedCount})`}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -149,14 +177,12 @@ function Chip({ active, children, onClick, title }) {
 export default function FicheMouvement() {
   const navigate = useNavigate();
   const params = useParams();
-  const { user: ctxUser, logout } = useContext(AuthContext) || {}; // 🔹 Récupère user & logout du contexte
-
-  // Agence courante : URL > userData
+  const { user: ctxUser } = useContext(AuthContext) || {};
   const localUser = JSON.parse(localStorage.getItem("userData") || "{}");
-  const user = ctxUser || localUser; // 🔹 Si pas dans le contexte, prend localStorage
+  const user = ctxUser || localUser;
   const currentAgenceId = params.agence_id || user?.agence_id || "";
   const LS_KEY = currentAgenceId ? `dossiersImportes:${currentAgenceId}` : "dossiersImportes";
-
+  const FILTERS_KEY = currentAgenceId ? `ficheMvtFilters:${currentAgenceId}` : "ficheMvtFilters";
 
   // Données importées
   const [rows, setRows] = useState([]);
@@ -168,6 +194,20 @@ export default function FicheMouvement() {
   const [flightsSel, setFlightsSel] = useState([]); // multi
   const [tosSel, setTosSel] = useState([]); // multi
   const [villesSel, setVillesSel] = useState([]); // multi
+  const [hotelsSel, setHotelsSel] = useState([]); // multi
+
+  // Sélection fine des dossiers (pax)
+  const [selectedDossierIds, setSelectedDossierIds] = useState(() => new Set());
+
+  // Observations ouvertes (par dossier)
+  const [openObs, setOpenObs] = useState(() => new Set());
+  const toggleObs = (key) => {
+    setOpenObs((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
 
   // UI
   const [msg, setMsg] = useState("");
@@ -176,9 +216,10 @@ export default function FicheMouvement() {
   const [loading, setLoading] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState("fr");
   const [languages, setLanguages] = useState([]);
+
   const tCode = typeSel === "arrivee" ? "A" : typeSel === "depart" ? "D" : null;
 
-  // Langues
+  /* Langues */
   useEffect(() => {
     (async () => {
       try {
@@ -188,41 +229,63 @@ export default function FicheMouvement() {
         if (langs.length && !langs.find((l) => l.code === selectedLanguage)) {
           setSelectedLanguage(langs[0].code);
         }
-      } catch (e) {
-        // pas bloquant
-      }
+      } catch {}
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reload import
+  /* Reload import */
   useEffect(() => {
     const saved = localStorage.getItem(LS_KEY);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          setRows(parsed.map((d) => ({ ...d, _type: deriveType(d), _to: d._to ?? pickTO(d), _ref_to: d._ref_to ?? pickRefTO(d) })));
-          setMsg(`Import rechargé (${parsed.length}) pour l'agence ${currentAgenceId || "—"}.`);
+          const normalized = normalizeRows(parsed);
+          setRows(normalized);
+          setMsg(`Import rechargé (${normalized.length}) pour l'agence ${currentAgenceId || "—"}.`);
         }
       } catch {}
     }
   }, [LS_KEY, currentAgenceId]);
 
-  // Import fichier
+  /* Hydrate filtres sauvegardés */
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(FILTERS_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (!saved) return;
+      if (saved.typeSel) setTypeSel(saved.typeSel);
+      if (saved.dateSel) setDateSel(saved.dateSel);
+      if (saved.airportSel) setAirportSel(saved.airportSel);
+      if (Array.isArray(saved.flightsSel)) setFlightsSel(saved.flightsSel);
+      if (Array.isArray(saved.tosSel)) setTosSel(saved.tosSel);
+      if (Array.isArray(saved.villesSel)) setVillesSel(saved.villesSel);
+      if (Array.isArray(saved.hotelsSel)) setHotelsSel(saved.hotelsSel);
+      if (typeof saved.movementName === "string") setMovementName(saved.movementName);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [FILTERS_KEY]);
+
+  /* Sauvegarde filtres */
+  useEffect(() => {
+    const payload = { typeSel, dateSel, airportSel, flightsSel, tosSel, villesSel, hotelsSel, movementName };
+    try { localStorage.setItem(FILTERS_KEY, JSON.stringify(payload)); } catch {}
+  }, [typeSel, dateSel, airportSel, flightsSel, tosSel, villesSel, hotelsSel, movementName, FILTERS_KEY]);
+
+  /* Import fichier */
   const onFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setLoading(true);
-    setMsg("");
+    setLoading(true); setMsg("");
 
-    // reset filtres
-    setTypeSel(null);
-    setDateSel("");
-    setAirportSel("");
-    setFlightsSel([]);
-    setTosSel([]);
-    setVillesSel([]);
+    // reset filtres & sélection
+    setTypeSel(null); setDateSel(""); setAirportSel("");
+    setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
+    setSelectedDossierIds(new Set());
+    setOpenObs(new Set());
+    try { localStorage.removeItem(FILTERS_KEY); } catch {}
 
     const formData = new FormData();
     formData.append("file", file);
@@ -230,18 +293,15 @@ export default function FicheMouvement() {
     formData.append("langue", selectedLanguage);
 
     try {
-      const res = await api.post("importer-dossier/", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      const res = await api.post("importer-dossier/", formData, { headers: { "Content-Type": "multipart/form-data" } });
       const list = Array.isArray(res.data?.dossiers) ? res.data.dossiers : [];
       const normalized = normalizeRows(list);
       localStorage.setItem(LS_KEY, JSON.stringify(normalized));
       setRows(normalized);
-      const total = normalized.length;
-      const crees = res.data?.dossiers_crees?.length || 0;
-      const maj = res.data?.dossiers_mis_a_jour?.length || 0;
+
+      const total = normalized.length, crees = res.data?.dossiers_crees?.length || 0, maj = res.data?.dossiers_mis_a_jour?.length || 0;
       setMsg(total ? `Import OK — ${crees} créé(s), ${maj} MAJ, total ${total}.` : "Aucune ligne exploitable.");
-    } catch (err) {
+    } catch {
       setMsg("Erreur lors de l'importation.");
     } finally {
       setLoading(false);
@@ -251,26 +311,22 @@ export default function FicheMouvement() {
 
   const clearImport = () => {
     localStorage.removeItem(LS_KEY);
+    localStorage.removeItem(FILTERS_KEY);
     setRows([]);
-    setTypeSel(null);
-    setDateSel("");
-    setAirportSel("");
-    setFlightsSel([]);
-    setTosSel([]);
-    setVillesSel([]);
+    setTypeSel(null); setDateSel(""); setAirportSel("");
+    setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
+    setSelectedDossierIds(new Set());
+    setOpenObs(new Set());
     setMsg("Import local vidé.");
   };
 
   /* =========================
-     Options simples & lisibles
+     Options dépendantes
   ========================= */
   const dateOptions = useMemo(() => {
     if (!rows.length) return [];
     const set = new Set();
-    (tCode ? rows.filter((r) => r._type === tCode) : rows).forEach((r) => {
-      const dk = getDateKey(r);
-      if (dk) set.add(dk);
-    });
+    (tCode ? rows.filter((r) => r._type === tCode) : rows).forEach((r) => { const dk = getDateKey(r); if (dk) set.add(dk); });
     return Array.from(set).sort();
   }, [rows, tCode]);
 
@@ -280,61 +336,43 @@ export default function FicheMouvement() {
     rows
       .filter((r) => r._type === tCode)
       .filter((r) => getDateKey(r) === dateSel)
-      .forEach((r) => {
-        const val = tCode === "D" ? (r.aeroport_depart || "").trim() : (r.aeroport_arrivee || "").trim();
-        if (val) set.add(val);
-      });
+      .forEach((r) => { const val = tCode === "D" ? (r.aeroport_depart || "").trim() : (r.aeroport_arrivee || "").trim(); if (val) set.add(val); });
     return Array.from(set).sort();
   }, [rows, tCode, dateSel]);
 
   const flightOptions = useMemo(() => {
     if (!rows.length || !tCode || !dateSel || !airportSel) return [];
-    const map = new Map(); // flight -> {times:Set, pax,count}
+    const map = new Map();
     rows
       .filter((r) => r._type === tCode)
       .filter((r) => getDateKey(r) === dateSel)
-      .filter((r) =>
-        tCode === "D"
-          ? (r.aeroport_depart || "").trim() === airportSel
-          : (r.aeroport_arrivee || "").trim() === airportSel
-      )
+      .filter((r) => (tCode === "D" ? (r.aeroport_depart || "").trim() === airportSel : (r.aeroport_arrivee || "").trim() === airportSel))
       .forEach((r) => {
         const flight = getFlightNo(r, tCode) || "—";
         const tm = getFlightTime(r, tCode);
         const pax = getPaxForType(r, tCode);
         const entry = map.get(flight) || { flight, times: new Set(), pax: 0, count: 0 };
         if (tm) entry.times.add(formatShortTime(tm));
-        entry.pax += pax;
-        entry.count += 1;
-        map.set(flight, entry);
+        entry.pax += pax; entry.count += 1; map.set(flight, entry);
       });
-    return Array.from(map.values())
-      .map((x) => ({ ...x, times: Array.from(x.times).sort() }))
-      .sort((a, b) => b.pax - a.pax);
+    return Array.from(map.values()).map((x) => ({ ...x, times: Array.from(x.times).sort() })).sort((a,b)=>b.pax-a.pax);
   }, [rows, tCode, dateSel, airportSel]);
 
   const toOptions = useMemo(() => {
     if (!rows.length || !tCode || !dateSel || !airportSel || flightsSel.length === 0) return [];
-    const map = new Map(); // to -> {pax,count}
+    const map = new Map();
     rows
       .filter((r) => r._type === tCode)
       .filter((r) => getDateKey(r) === dateSel)
-      .filter((r) =>
-        tCode === "D"
-          ? (r.aeroport_depart || "").trim() === airportSel
-          : (r.aeroport_arrivee || "").trim() === airportSel
-      )
+      .filter((r) => (tCode === "D" ? (r.aeroport_depart || "").trim() === airportSel : (r.aeroport_arrivee || "").trim() === airportSel))
       .filter((r) => flightsSel.includes(getFlightNo(r, tCode) || "—"))
       .forEach((r) => {
-        const to = r._to || "";
-        if (!to) return;
+        const to = r._to || ""; if (!to) return;
         const pax = getPaxForType(r, tCode);
         const entry = map.get(to) || { to, pax: 0, count: 0 };
-        entry.pax += pax;
-        entry.count += 1;
-        map.set(to, entry);
+        entry.pax += pax; entry.count += 1; map.set(to, entry);
       });
-    return Array.from(map.values()).sort((a, b) => b.pax - a.pax);
+    return Array.from(map.values()).sort((a,b)=>b.pax-a.pax);
   }, [rows, tCode, dateSel, airportSel, flightsSel]);
 
   const villeOptions = useMemo(() => {
@@ -342,11 +380,7 @@ export default function FicheMouvement() {
     let filtered = rows
       .filter((r) => r._type === tCode)
       .filter((r) => getDateKey(r) === dateSel)
-      .filter((r) =>
-        tCode === "D"
-          ? (r.aeroport_depart || "").trim() === airportSel
-          : (r.aeroport_arrivee || "").trim() === airportSel
-      )
+      .filter((r) => (tCode === "D" ? (r.aeroport_depart || "").trim() === airportSel : (r.aeroport_arrivee || "").trim() === airportSel))
       .filter((r) => flightsSel.includes(getFlightNo(r, tCode) || "—"));
 
     if (tosSel.length > 0) {
@@ -354,102 +388,159 @@ export default function FicheMouvement() {
       filtered = filtered.filter((r) => r._to && st.has(r._to));
     }
 
-    const map = new Map(); // ville -> {hotels:Set, pax,count}
+    const map = new Map(); // ville -> {pax,count}
     filtered.forEach((r) => {
       const ville = (r.ville || "").toString().trim() || "—";
-      const hotel =
-        (typeof r.hotel_nom === "string" && r.hotel_nom) ||
-        (typeof r.hotel_name === "string" && r.hotel_name) ||
-        (typeof r.hotel === "string" && r.hotel) ||
-        (r.hotel && r.hotel.nom) ||
-        "";
       const pax = getPaxForType(r, tCode);
-      const entry = map.get(ville) || { ville, hotels: new Set(), pax: 0, count: 0 };
-      if (hotel) entry.hotels.add(hotel);
-      entry.pax += pax;
-      entry.count += 1;
+      const entry = map.get(ville) || { ville, pax: 0, count: 0 };
+      entry.pax += pax; entry.count += 1;
       map.set(ville, entry);
     });
 
-    return Array.from(map.values())
-      .sort((a, b) => b.pax - a.pax)
-      .map((v) => ({ ...v, hotels: Array.from(v.hotels) }));
+    return Array.from(map.values()).sort((a,b)=>b.pax-a.pax);
   }, [rows, tCode, dateSel, airportSel, flightsSel, tosSel]);
 
-  // Dossiers effectivement sélectionnés par filtres (auto)
-  const selectedRecords = useMemo(() => {
-    if (!tCode || !dateSel || !airportSel) return [];
+  const hotelOptions = useMemo(() => {
+    if (!rows.length || !tCode || !dateSel || !airportSel || flightsSel.length === 0) return [];
     let filtered = rows
       .filter((r) => r._type === tCode)
       .filter((r) => getDateKey(r) === dateSel)
-      .filter((r) =>
-        tCode === "D"
-          ? (r.aeroport_depart || "").trim() === airportSel
-          : (r.aeroport_arrivee || "").trim() === airportSel
-      );
-    if (flightsSel.length > 0) {
-      filtered = filtered.filter((r) => flightsSel.includes(getFlightNo(r, tCode) || "—"));
-    }
+      .filter((r) => (tCode === "D" ? (r.aeroport_depart || "").trim() === airportSel : (r.aeroport_arrivee || "").trim() === airportSel))
+      .filter((r) => flightsSel.includes(getFlightNo(r, tCode) || "—"));
     if (tosSel.length > 0) {
       const st = new Set(tosSel);
       filtered = filtered.filter((r) => r._to && st.has(r._to));
     }
     if (villesSel.length > 0) {
-      const sv = new Set(villesSel.map((x) => String(x).trim()));
+      const sv = new Set(villesSel.map((x)=>String(x).trim()));
       filtered = filtered.filter((r) => sv.has((r.ville || "").toString().trim() || "—"));
     }
-    return filtered;
+    const map = new Map(); // hotel -> {pax,count}
+    filtered.forEach((r) => {
+      const hotel =
+        (typeof r.hotel_nom === "string" && r.hotel_nom) ||
+        (typeof r.hotel_name === "string" && r.hotel_name) ||
+        (typeof r.hotel === "string" && r.hotel) ||
+        (r.hotel && r.hotel.nom) ||
+        "(Sans hôtel)";
+      const pax = getPaxForType(r, tCode);
+      const entry = map.get(hotel) || { hotel, pax: 0, count: 0 };
+      entry.pax += pax; entry.count += 1; map.set(hotel, entry);
+    });
+    return Array.from(map.values()).sort((a,b)=>b.pax-a.pax);
   }, [rows, tCode, dateSel, airportSel, flightsSel, tosSel, villesSel]);
-  const selectedCount = selectedRecords.length;
+
+  /* =========================
+     Auto-sélections si 1 seule option
+  ========================= */
+  useEffect(() => { if (!tCode) return; if (!dateSel && dateOptions.length === 1) setDateSel(dateOptions[0]); }, [tCode, dateOptions, dateSel]);
+  useEffect(() => { if (!dateSel) return; if (!airportSel && airportOptions.length === 1) setAirportSel(airportOptions[0]); }, [dateSel, airportOptions, airportSel]);
+  useEffect(() => { if (!airportSel) return; if (flightsSel.length === 0 && flightOptions.length === 1) setFlightsSel([flightOptions[0].flight]); }, [airportSel, flightOptions, flightsSel.length]);
+  useEffect(() => { if (flightsSel.length === 0) return; if (tosSel.length === 0 && toOptions.length === 1) setTosSel([toOptions[0].to]); }, [flightsSel.length, toOptions, tosSel.length]);
+  useEffect(() => { if (tosSel.length === 0) return; if (villesSel.length === 0 && villeOptions.length === 1) setVillesSel([villeOptions[0].ville]); }, [tosSel.length, villeOptions, villesSel.length]);
+  useEffect(() => { if (villesSel.length === 0) return; if (hotelsSel.length === 0 && hotelOptions.length === 1) setHotelsSel([hotelOptions[0].hotel]); }, [villesSel.length, hotelOptions, hotelsSel.length]);
+
+  /* =========================
+     Dossiers filtrés + regroupement par hôtel
+  ========================= */
+  const filteredRecords = useMemo(() => {
+    if (!tCode || !dateSel || !airportSel) return [];
+    let filtered = rows
+      .filter((r) => r._type === tCode)
+      .filter((r) => getDateKey(r) === dateSel)
+      .filter((r) => (tCode === "D" ? (r.aeroport_depart || "").trim() === airportSel : (r.aeroport_arrivee || "").trim() === airportSel));
+    if (flightsSel.length > 0) filtered = filtered.filter((r) => flightsSel.includes(getFlightNo(r, tCode) || "—"));
+    if (tosSel.length > 0) { const st = new Set(tosSel); filtered = filtered.filter((r) => r._to && st.has(r._to)); }
+    if (villesSel.length > 0) { const sv = new Set(villesSel.map((x)=>String(x).trim())); filtered = filtered.filter((r) => sv.has((r.ville || "").toString().trim() || "—")); }
+    if (hotelsSel.length > 0) {
+      const sh = new Set(hotelsSel.map((x)=>String(x).trim()));
+      filtered = filtered.filter((r) => {
+        const hotel =
+          (typeof r.hotel_nom === "string" && r.hotel_nom) ||
+          (typeof r.hotel_name === "string" && r.hotel_name) ||
+          (typeof r.hotel === "string" && r.hotel) ||
+          (r.hotel && r.hotel.nom) ||
+          "(Sans hôtel)";
+        return sh.has(String(hotel).trim());
+      });
+    }
+    return filtered;
+  }, [rows, tCode, dateSel, airportSel, flightsSel, tosSel, villesSel, hotelsSel]);
+
+  // Ids sélectionnés (par défaut, tout coché quand le filtre change)
+  useEffect(() => {
+    const next = new Set(filteredRecords.map((r) => r.id).filter(Boolean));
+    setSelectedDossierIds(next);
+  }, [filteredRecords.map((r)=>r.id).join("|")]);
+
+  const groupedByHotel = useMemo(() => {
+    const map = new Map(); // hotel -> array(rows)
+    filteredRecords.forEach((r) => {
+      const hotel =
+        (typeof r.hotel_nom === "string" && r.hotel_nom) ||
+        (typeof r.hotel_name === "string" && r.hotel_name) ||
+        (typeof r.hotel === "string" && r.hotel) ||
+        (r.hotel && r.hotel.nom) ||
+        "(Sans hôtel)";
+      const list = map.get(hotel) || [];
+      list.push(r);
+      map.set(hotel, list);
+    });
+    return Array.from(map.entries()).sort((a,b)=>b[1].length - a[1].length);
+  }, [filteredRecords]);
+
+  // KPIs sélection + obs
+  const selectedCount = Array.from(selectedDossierIds).length;
   const selectedPax = useMemo(
-    () => selectedRecords.reduce((acc, r) => acc + getPaxForType(r, tCode), 0),
-    [selectedRecords, tCode]
+    () => filteredRecords.filter((r) => selectedDossierIds.has(r.id)).reduce((acc, r) => acc + getPaxForType(r, tCode), 0),
+    [filteredRecords, selectedDossierIds, tCode]
+  );
+  const selectedRows = useMemo(
+    () => filteredRecords.filter((r) => selectedDossierIds.has(r.id)),
+    [filteredRecords, selectedDossierIds]
+  );
+  const obsCount = useMemo(
+    () => selectedRows.reduce((acc, r) => acc + (r.observation && String(r.observation).trim() ? 1 : 0), 0),
+    [selectedRows]
   );
 
-  const selectionObservations = useMemo(() => {
-    const out = [];
-    selectedRecords.forEach((d) => {
-      const obs = pickObservation(d);
-      if (obs) out.push({ ref: d.reference || "—", obs });
-    });
-    return out;
-  }, [selectedRecords]);
-
-  /* Create */
+  /* Création */
   const onCreate = async () => {
     setMsg("");
-    if (!currentAgenceId) {
-      setMsg("Agence inconnue. Ouvrez via /agence/:agence_id/fiche-mouvement.");
-      return;
-    }
-    if (!tCode || !dateSel || !airportSel) {
-      setMsg("Complétez Type, Date et Aéroport.");
-      return;
-    }
-    if (selectedCount === 0) {
-      setMsg("Aucun dossier correspondant.");
-      return;
-    }
+    if (!currentAgenceId) { setMsg("Agence inconnue. Ouvrez via /agence/:agence_id/fiche-mouvement."); return; }
+    if (!tCode || !dateSel || !airportSel) { setMsg("Complétez Type, Date et Aéroport."); return; }
+    if (selectedCount === 0) { setMsg("Aucun dossier sélectionné."); return; }
 
+    const selRows = filteredRecords.filter((r) => selectedDossierIds.has(r.id));
     const payload = {
       agence: currentAgenceId,
       name: movementName || null,
       type: tCode,
       date: dateSel,
       aeroport: airportSel,
-      dossier_ids: selectedRecords.map((r) => r.id).filter(Boolean),
+      dossier_ids: selRows.map((r) => r.id).filter(Boolean),
       reference: formatRefFromDateKey(dateSel),
-      tour_operateurs: Array.from(new Set(selectedRecords.map((r) => r._to).filter(Boolean))),
-      villes: Array.from(new Set(selectedRecords.map((r) => (r.ville || "").trim() || "—").filter(Boolean))),
+      tour_operateurs: Array.from(new Set(selRows.map((r) => r._to).filter(Boolean))),
+      villes: Array.from(new Set(selRows.map((r) => (r.ville || "").trim() || "—").filter(Boolean))),
     };
 
     try {
       setCreating(true);
       await api.post("creer-fiche-mouvement/", payload);
+
+      // Retirer les dossiers créés de l'import (state + localStorage)
+      const createdIds = new Set(selRows.map((r) => r.id).filter(Boolean));
+      const remaining = rows.filter((r) => !createdIds.has(r.id));
+      setRows(remaining);
+      localStorage.setItem(LS_KEY, JSON.stringify(remaining));
+
+      // Feedback
+      setMsg(`Fiche créée : ${selRows.length} dossier(s) retiré(s). Restant dans l'import : ${remaining.length}.`);
+
+      // Navigation (garde les filtres grâce à FILTERS_KEY)
       navigate(`/agence/${currentAgenceId}/fiches-mouvement`, { replace: true });
     } catch (err) {
-      const status = err?.response?.status;
-      const data = err?.response?.data || {};
+      const status = err?.response?.status; const data = err?.response?.data || {};
       if (status === 409) {
         const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
         const hint = suggestions.length ? `\nSuggestions: ${suggestions.join(", ")}` : "";
@@ -457,6 +548,11 @@ export default function FicheMouvement() {
         if (newRef && newRef.trim()) {
           try {
             await api.post("creer-fiche-mouvement/", { ...payload, reference: newRef.trim() });
+            // même traitement retrait
+            const createdIds = new Set(selRows.map((r) => r.id).filter(Boolean));
+            const remaining = rows.filter((r) => !createdIds.has(r.id));
+            setRows(remaining);
+            localStorage.setItem(LS_KEY, JSON.stringify(remaining));
             navigate(`/agence/${currentAgenceId}/fiches-mouvement`, { replace: true });
             return;
           } catch (e2) {
@@ -474,153 +570,149 @@ export default function FicheMouvement() {
   };
 
   /* =========================================================
-     UI — One page, hyper clair
+     UI — largeur contenue + résumé haut + choix + pax par hôtel
   ========================================================= */
   return (
-    
-    <div className="fm-wrap">
-      <header className="fm-top">
-        <div className="fm-top-left">
-          <h2>Fiche de mouvement</h2>
-          {msg ? <div className="fm-msg">{msg}</div> : null}
-        </div>
+    <div className="fm-page">
+      <div className="fm-wrap">
+        <header className="fm-top sticky">
+          <div className="fm-top-left">
+            <h2>Fiche de mouvement</h2>
+            {msg ? <div className="fm-msg">{msg}</div> : null}
+          </div>
 
-        <div className="fm-actions">
-          {currentAgenceId ? (
-            <Link className="btn btn-outline-secondary btn-sm" to={`/agence/${currentAgenceId}/dashboard`}>
-              ← Dashboard
-            </Link>
-          ) : null}
-          <button
-            type="button"
-            className="btn btn-outline-primary btn-sm"
-            onClick={() =>
-              currentAgenceId ? navigate(`/agence/${currentAgenceId}/fiches-mouvement`) : navigate("/fiches-mouvement")
-            }
-          >
-            ↪ Fiches
-          </button>
+          <div className="fm-actions">
+            {currentAgenceId ? (
+              <Link className="btn btn-outline-secondary btn-sm" to={`/agence/${currentAgenceId}/dashboard`}>
+                ← Dashboard
+              </Link>
+            ) : null}
+            <button
+              type="button"
+              className="btn btn-outline-primary btn-sm"
+              onClick={() =>
+                currentAgenceId ? navigate(`/agence/${currentAgenceId}/fiches-mouvement`) : navigate("/fiches-mouvement")
+              }
+            >
+              ↪ Fiches
+            </button>
 
-          <div className="fm-sep" />
+            <div className="fm-sep" />
 
-          <select
-            className="form-select form-select-sm"
-            value={selectedLanguage}
-            onChange={(e) => setSelectedLanguage(e.target.value)}
-            disabled={loading}
-            title="Langue fichier"
-          >
-            {languages.length ? (
-              languages.map((lang) => (
-                <option key={lang.id ?? lang.code} value={lang.code}>
-                  {lang.name}
-                </option>
-              ))
-            ) : (
-              <option value="">Langues…</option>
-            )}
-          </select>
+            <select
+              className="form-select form-select-sm"
+              value={selectedLanguage}
+              onChange={(e) => setSelectedLanguage(e.target.value)}
+              disabled={loading}
+              title="Langue fichier"
+            >
+              {languages.length ? (
+                languages.map((lang) => (
+                  <option key={lang.id ?? lang.code} value={lang.code}>
+                    {lang.name}
+                  </option>
+                ))
+              ) : (
+                <option value="">Langues…</option>
+              )}
+            </select>
 
-          <label className="btn btn-dark btn-sm m-0">
-            Importer Excel
-            <input type="file" accept=".xls,.xlsx" onChange={onFile} hidden disabled={loading} />
-          </label>
+            <label className="btn btn-dark btn-sm m-0">
+              Importer Excel
+              <input type="file" accept=".xls,.xlsx" onChange={onFile} hidden disabled={loading} />
+            </label>
 
-          <button type="button" className="btn btn-outline-danger btn-sm" onClick={clearImport}>
-            🧹 Vider
-          </button>
-        </div>
-      </header>
+            <button type="button" className="btn btn-outline-danger btn-sm" onClick={clearImport}>
+              🧹 Vider
+            </button>
+          </div>
+        </header>
 
-      <div className="fm-body">
-        {/* Colonne Filtres */}
-        <div className="fm-col fm-col-left">
-          {/* Type */}
+        {/* Résumé compact */}
+        <TopSummaryBar
+          tCode={tCode}
+          dateSel={dateSel}
+          airportSel={airportSel}
+          flightsSel={flightsSel}
+          tosSel={tosSel}
+          villesSel={villesSel}
+          hotelsSel={hotelsSel}
+          selectedCount={selectedCount}
+          selectedPax={selectedPax}
+          movementName={movementName}
+          setMovementName={setMovementName}
+          onCreate={onCreate}
+          creating={creating}
+          obsCount={obsCount}
+        />
+
+        <div className="fm-body onecol">
+          {/* TYPE */}
           <Section title="Type">
             <div className="fm-row chips">
               <Chip
                 active={typeSel === "arrivee"}
-                onClick={() => {
-                  setTypeSel("arrivee");
-                  setDateSel(""); setAirportSel(""); setFlightsSel([]); setTosSel([]); setVillesSel([]);
-                }}
+                onClick={() => { setTypeSel("arrivee"); setDateSel(""); setAirportSel(""); setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]); setSelectedDossierIds(new Set()); }}
               >
                 Arrivées
               </Chip>
               <Chip
                 active={typeSel === "depart"}
-                onClick={() => {
-                  setTypeSel("depart");
-                  setDateSel(""); setAirportSel(""); setFlightsSel([]); setTosSel([]); setVillesSel([]);
-                }}
+                onClick={() => { setTypeSel("depart"); setDateSel(""); setAirportSel(""); setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]); setSelectedDossierIds(new Set()); }}
               >
                 Départs
               </Chip>
             </div>
           </Section>
 
-          {/* Date */}
+          {/* DATE */}
           <Section
             title="Date du vol"
             disabled={!typeSel || dateOptions.length === 0}
-            right={
-              dateSel ? <span className="fm-badge">{dateSel}</span> : <span className="text-muted small">Choisir…</span>
-            }
+            right={dateSel ? <span className="fm-badge">{dateSel}</span> : <span className="text-muted small">Choisir…</span>}
           >
             <select
               className="form-select"
               value={dateSel}
-              onChange={(e) => {
-                setDateSel(e.target.value);
-                setAirportSel(""); setFlightsSel([]); setTosSel([]); setVillesSel([]);
-              }}
+              onChange={(e) => { setDateSel(e.target.value); setAirportSel(""); setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]); setSelectedDossierIds(new Set()); }}
               disabled={!typeSel || !dateOptions.length}
             >
               <option value="">— Sélectionner une date —</option>
-              {dateOptions.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
+              {dateOptions.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
           </Section>
 
-          {/* Aéroport */}
+          {/* AÉROPORT (chips au lieu de select) */}
           <Section
             title={typeSel === "depart" ? "Aéroport de départ" : "Aéroport d’arrivée"}
             disabled={!dateSel || airportOptions.length === 0}
-            right={
-              airportSel ? (
-                <span className="fm-badge">{airportSel}</span>
-              ) : (
-                <span className="text-muted small">Choisir…</span>
-              )
-            }
           >
-            <select
-              className="form-select"
-              value={airportSel}
-              onChange={(e) => {
-                setAirportSel(e.target.value);
-                setFlightsSel([]); setTosSel([]); setVillesSel([]);
-              }}
-              disabled={!dateSel || !airportOptions.length}
-            >
-              <option value="">— Sélectionner —</option>
-              {airportOptions.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
+            <div className="fm-row chips-wrap">
+              {airportSel && airportOptions.length === 0 && <div className="text-muted small">Aucun aéroport.</div>}
+              {airportOptions.map((a) => {
+                const act = airportSel === a;
+                return (
+                  <Chip
+                    key={a}
+                    active={act}
+                    onClick={() => {
+                      const next = act ? "" : a; // toggle
+                      setAirportSel(next);
+                      setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]); setSelectedDossierIds(new Set());
+                    }}
+                    title={a}
+                  >
+                    <strong>{a}</strong>
+                  </Chip>
+                );
+              })}
+            </div>
           </Section>
 
-          {/* Vols */}
+          {/* VOLS */}
           <Section title="Vols" disabled={!airportSel || flightOptions.length === 0}>
             <div className="fm-row chips-wrap">
-              {airportSel && flightOptions.length === 0 && (
-                <div className="text-muted small">Aucun vol trouvé.</div>
-              )}
+              {airportSel && flightOptions.length === 0 && <div className="text-muted small">Aucun vol trouvé.</div>}
               {flightOptions.map((f) => {
                 const act = flightsSel.includes(f.flight);
                 const times = f.times.join(" / ");
@@ -628,11 +720,7 @@ export default function FicheMouvement() {
                   <Chip
                     key={f.flight}
                     active={act}
-                    onClick={() =>
-                      setFlightsSel((prev) =>
-                        prev.includes(f.flight) ? prev.filter((x) => x !== f.flight) : [...prev, f.flight]
-                      )
-                    }
+                    onClick={() => { setFlightsSel((prev) => prev.includes(f.flight) ? prev.filter((x) => x !== f.flight) : [...prev, f.flight]); setSelectedDossierIds(new Set()); }}
                     title={`${f.count} dossiers • ${f.pax} pax`}
                   >
                     <strong>{f.flight}</strong>
@@ -644,22 +732,18 @@ export default function FicheMouvement() {
             </div>
           </Section>
 
-          {/* T.O. */}
+          {/* TO */}
           <Section title="Tour opérateur" disabled={flightsSel.length === 0 || toOptions.length === 0}>
             <div className="fm-row chips-wrap">
               {flightsSel.length === 0 && <div className="text-muted small">Choisissez d’abord un vol.</div>}
-              {flightsSel.length > 0 && toOptions.length === 0 && (
-                <div className="text-muted small">Aucun T.O. pour ces vols.</div>
-              )}
+              {flightsSel.length > 0 && toOptions.length === 0 && <div className="text-muted small">Aucun T.O. pour ces vols.</div>}
               {toOptions.map((t) => {
                 const act = tosSel.includes(t.to);
                 return (
                   <Chip
                     key={t.to}
                     active={act}
-                    onClick={() =>
-                      setTosSel((prev) => (prev.includes(t.to) ? prev.filter((x) => x !== t.to) : [...prev, t.to]))
-                    }
+                    onClick={() => { setTosSel((prev) => prev.includes(t.to) ? prev.filter((x) => x !== t.to) : [...prev, t.to]); setSelectedDossierIds(new Set()); }}
                     title={`${t.count} dossiers • ${t.pax} pax`}
                   >
                     <strong>{t.to}</strong>
@@ -670,140 +754,180 @@ export default function FicheMouvement() {
             </div>
           </Section>
 
-          {/* Villes & Hôtels */}
-          <Section title="Villes & hôtels" disabled={tosSel.length === 0 || villeOptions.length === 0}>
-            <div className="fm-city-list">
-              {tosSel.length === 0 && <div className="text-muted small">Sélectionnez d’abord un T.O.</div>}
-              {tosSel.length > 0 && villeOptions.length === 0 && (
-                <div className="text-muted small">Aucune ville pour ce filtre.</div>
-              )}
+          {/* ZONES */}
+          <Section title="Zones (villes)" disabled={tosSel.length === 0 || villeOptions.length === 0}>
+            {tosSel.length === 0 && <div className="text-muted small">Sélectionnez d’abord un T.O.</div>}
+            <div className="fm-row chips-wrap">
               {villeOptions.map((v) => {
-                const checked = villesSel.includes(v.ville);
-                const hotelsShort = v.hotels.slice(0, 3).join(", ");
-                const more = v.hotels.length > 3 ? ` +${v.hotels.length - 3}` : "";
+                const act = villesSel.includes(v.ville);
                 return (
-                  <label key={v.ville} className={`fm-city ${checked ? "is-checked" : ""}`} title={v.hotels.join(", ")}>
-                    <input
-                      type="checkbox"
-                      className="form-check-input"
-                      checked={checked}
-                      onChange={() =>
-                        setVillesSel((prev) =>
-                          prev.includes(v.ville) ? prev.filter((x) => x !== v.ville) : [...prev, v.ville]
-                        )
-                      }
-                    />
-                    <div className="fm-city-main">
-                      <div className="fm-city-title">
-                        <strong>{v.ville}</strong>
-                        <span className="fm-city-hotels">{v.hotels.length ? ` — ${hotelsShort}${more}` : ""}</span>
-                      </div>
-                      <div className="fm-city-right">
-                        <span className="fm-chip-pill">{v.pax} pax</span>
-                        <span className="fm-chip-pill">{v.count} dossiers</span>
-                      </div>
-                    </div>
-                  </label>
+                  <Chip
+                    key={v.ville}
+                    active={act}
+                    onClick={() => {
+                      setVillesSel((prev) => prev.includes(v.ville) ? prev.filter((x) => x !== v.ville) : [...prev, v.ville]);
+                      setSelectedDossierIds(new Set());
+                    }}
+                    title={`${v.count} dossiers • ${v.pax} pax`}
+                  >
+                    <strong>{v.ville}</strong>
+                    <span className="fm-chip-pill">{v.pax} pax</span>
+                  </Chip>
                 );
               })}
             </div>
           </Section>
-        </div>
 
-        {/* Colonne Résumé */}
-        <div className="fm-col fm-col-right">
-          <div className="fm-summary">
-            <div className="fm-summary-title">Résumé</div>
-            <div className="fm-summary-row">
-              <span>Type</span>
-              <b>{tCode ? labelType(tCode) : "—"}</b>
+          {/* HÔTELS */}
+          <Section title="Hôtels" disabled={villeOptions.length === 0 || (villesSel.length === 0 && hotelOptions.length === 0)}>
+            {villesSel.length === 0 && <div className="text-muted small">Sélectionnez d’abord au moins une zone.</div>}
+            <div className="fm-row chips-wrap">
+              {hotelOptions.map((h) => {
+                const act = hotelsSel.includes(h.hotel);
+                return (
+                  <Chip
+                    key={h.hotel}
+                    active={act}
+                    onClick={() => { setHotelsSel((prev) => prev.includes(h.hotel) ? prev.filter((x) => x !== h.hotel) : [...prev, h.hotel]); setSelectedDossierIds(new Set()); }}
+                    title={`${h.count} dossiers • ${h.pax} pax`}
+                  >
+                    <strong>{h.hotel}</strong>
+                    <span className="fm-chip-pill">{h.pax} pax</span>
+                  </Chip>
+                );
+              })}
             </div>
-            <div className="fm-summary-row">
-              <span>Date</span>
-              <b>{dateSel || "—"}</b>
-            </div>
-            <div className="fm-summary-row">
-              <span>Aéroport</span>
-              <b>{airportSel || "—"}</b>
-            </div>
-            <div className="fm-summary-row">
-              <span>Vol(s)</span>
-              <b>{flightsSel.length || 0}</b>
-            </div>
-            <div className="fm-summary-row">
-              <span>T.O.</span>
-              <b>{tosSel.length || 0}</b>
-            </div>
-            <div className="fm-summary-row">
-              <span>Villes</span>
-              <b>{villesSel.length || 0}</b>
-            </div>
-            <div className="fm-summary-sep" />
-            <div className="fm-summary-kpi">
-              <div className="kpi">
-                <div className="kpi-num">{selectedCount}</div>
-                <div className="kpi-label">dossiers</div>
-              </div>
-              <div className="kpi">
-                <div className="kpi-num">{selectedPax}</div>
-                <div className="kpi-label">pax</div>
-              </div>
-            </div>
-            <div className="fm-summary-input">
-              <label>Nom de la fiche</label>
-              <input
-                className="form-control"
-                placeholder={
-                  tCode && dateSel && airportSel
-                    ? `${labelType(tCode)} ${airportSel} ${dateSel}`
-                    : "Ex: Arrivées TUN 2025-08-31"
-                }
-                value={movementName}
-                onChange={(e) => setMovementName(e.target.value)}
-              />
-            </div>
-            <button
-              className="btn btn-success w-100"
-              onClick={onCreate}
-              disabled={creating || selectedCount === 0}
-              title={selectedCount === 0 ? "Aucun dossier pour ces filtres" : "Créer la fiche"}
+          </Section>
+
+          {/* PAX PAR HÔTEL — sélection au niveau ligne/dossier */}
+          {!!groupedByHotel.length && (
+            <Section
+              title="Pax par hôtel (sélection)"
+              right={<span className="text-muted small">Coche/décoche pour inclure dans la fiche</span>}
             >
-              {creating ? "Création..." : `Créer la fiche (${selectedCount})`}
-            </button>
-          </div>
+              <div className="fm-hotels-list">
+                {groupedByHotel.map(([hotel, list]) => (
+                  <div key={hotel} className="fm-hotel-block">
+                    <div className="fm-hotel-head">
+                      <b>{hotel}</b>
+                      <span className="fm-chip-pill">{list.length} ligne(s)</span>
+                    </div>
+                    <div className="fm-hotel-body">
+                      {list.map((r, i) => {
+                        const checked = selectedDossierIds.has(r.id);
+                        const hasObs = !!(r.observation && String(r.observation).trim());
+                        const k = rowKeyOf(r, i);
+                        const isOpen = openObs.has(k);
 
-          {!!selectionObservations.length && (
-            <div className="fm-observ">
-              <div className="fm-observ-title">Observations</div>
-              <div className="fm-observ-list">
-                {selectionObservations.slice(0, 6).map((o, i) => (
-                  <div key={i} className="fm-observ-item">
-                    <b>{o.ref}</b> — {o.obs}
+                        return (
+                          <label key={r.id || `${k}`} className={`fm-passenger ${checked ? "is-checked" : ""}`}>
+                            <input
+                              type="checkbox"
+                              className="form-check-input"
+                              checked={checked}
+                              onChange={() => {
+                                setSelectedDossierIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(r.id)) next.delete(r.id);
+                                  else next.add(r.id);
+                                  return next;
+                                });
+                              }}
+                            />
+                            <div className="fm-passenger-main">
+                              <div className="fm-passenger-name fm-passenger-name--resa">
+                                <span className="fm-resa-name">
+                                  {(r.nom_reservation || "").trim() || "—"}
+                                </span>
+                                <span className="fm-resa-pax">{getPaxDisplay(r, tCode)}</span>
+
+                                {hasObs ? (
+                                  <button
+                                    type="button"
+                                    className={`fm-resa-caret ${isOpen ? "is-open" : ""}`}
+                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleObs(k); }}
+                                    aria-expanded={isOpen}
+                                    aria-label={isOpen ? "Masquer l'observation" : "Afficher l'observation"}
+                                    title={isOpen ? "Masquer l'observation" : "Afficher l'observation"}
+                                  >
+                                    <span className="warn-icon" aria-hidden="true">⚠️</span>
+                                  </button>
+                                ) : null}
+                              </div>
+
+                              {hasObs && isOpen ? (
+                                <div className="fm-obs-panel">
+                                  {String(r.observation).trim()}
+                                </div>
+                              ) : null}
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
                   </div>
                 ))}
-                {selectionObservations.length > 6 && (
-                  <div className="fm-observ-more">+ {selectionObservations.length - 6} autre(s)…</div>
-                )}
               </div>
-            </div>
+            </Section>
           )}
         </div>
       </div>
 
-      {/* Styles — one page, clean, sans scroll global */}
+      {/* Styles */}
       <style>{`
-        .fm-wrap{ height:100vh; display:flex; flex-direction:column; background:#f7f8fa; color:#0f172a; overflow:hidden; }
+        .fm-page{ background:#f1f5f9; min-height:100vh; }
+        .fm-wrap{ max-width:1120px; margin:0 auto; display:flex; flex-direction:column; background:transparent; }
+
         .fm-top{ display:flex; align-items:center; justify-content:space-between; padding:10px 16px; background:#fff; border-bottom:1px solid #e5e7eb; }
+        .fm-top.sticky{ position:sticky; top:0; z-index:5; }
         .fm-top h2{ margin:0; font-size:18px; font-weight:800; }
         .fm-msg{ font-size:12px; color:#475569; margin-top:4px; }
         .fm-top-left{ display:flex; flex-direction:column; }
         .fm-actions{ display:flex; align-items:center; gap:8px; }
         .fm-sep{ width:1px; height:20px; background:#e5e7eb; margin:0 4px; }
 
-        .fm-body{ flex:1; display:grid; grid-template-columns: 3fr 2fr; gap:12px; padding:12px 16px; overflow:hidden; }
-        .fm-col{ min-width:0; display:flex; flex-direction:column; gap:12px; overflow:auto; }
-        .fm-col-left{ padding-right:2px; }
-        .fm-col-right{ padding-left:2px; }
+        /* Résumé haut – version lisible */
+        .fm-top-summary.improved{
+          position: sticky; top: 56px; z-index: 4;
+          background: #ffffff; border-bottom: 1px solid #e5e7eb;
+          padding: 10px 16px; display: grid; grid-template-columns: 1fr auto; gap: 12px;
+        }
+        .fm-top-summary-grid{
+          display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px;
+        }
+        .kv{
+          background: #f8fafc;
+          border: 1px solid #e5e7eb;
+          border-radius: 10px;
+          padding: 8px 10px;
+          min-height: 60px;
+          display: flex; flex-direction: column; justify-content: center;
+        }
+        .kv-label{
+          font-size: 11px; letter-spacing: .02em; text-transform: uppercase;
+          color: #64748b; margin-bottom: 2px;
+        }
+        .kv-value{
+          font-size: 14px; font-weight: 700; color: #0f172a; line-height: 1.25;
+          word-break: break-word; white-space: normal;
+        }
+        .kv.kpi{
+          display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+          background: #f1f5f9;
+        }
+        .kv-danger{ background:#fff7ed; border-color:#fdba74; }
+
+        .kpi-pair{ text-align: center; }
+        .kpi-num{ font-size: 20px; font-weight: 800; }
+        .kpi-label{ font-size: 11px; color:#64748b; margin-top: 2px; }
+        .kpi-sep{ width: 1px; height: 32px; background: #e5e7eb; }
+        .fm-top-summary-actions{ display:flex; align-items:center; gap:8px; }
+
+        @media (max-width:1100px){ .fm-top-summary-grid{ grid-template-columns: repeat(3, minmax(0,1fr)); } }
+        @media (max-width:820px){ .fm-top-summary{ grid-template-columns: 1fr; } .fm-top-summary-grid{ grid-template-columns: repeat(2, minmax(0,1fr)); } }
+        @media (max-width:560px){ .fm-top-summary-grid{ grid-template-columns: 1fr; } }
+
+        .fm-body.onecol{ display:flex; flex-direction:column; gap:12px; padding:12px 16px; }
 
         .fm-sec{ position:relative; background:#fff; border:1px solid #e5e7eb; border-radius:12px; }
         .fm-sec-head{ display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px dashed #eef2f7; }
@@ -813,42 +937,39 @@ export default function FicheMouvement() {
         .fm-sec.is-disabled{ opacity:.6; }
         .fm-sec-mask{ position:absolute; inset:0; border-radius:12px; background:transparent; pointer-events:auto; }
 
-        .fm-row.chips{ display:flex; gap:8px; flex-wrap:wrap; }
-        .fm-row.chips-wrap{ display:flex; gap:8px; flex-wrap:wrap; }
-
+        .fm-row.chips, .fm-row.chips-wrap{ display:flex; gap:8px; flex-wrap:wrap; }
         .fm-chip{ border:1px solid #cbd5e1; background:#fff; border-radius:999px; padding:8px 12px; font-size:13px; font-weight:600; color:#0f172a; display:inline-flex; align-items:center; gap:8px; }
         .fm-chip:hover{ background:#f8fafc; }
         .fm-chip.is-active{ background:#0ea5e9; color:#fff; border-color:#0284c7; }
         .fm-chip-sub{ font-size:11px; opacity:.9; }
         .fm-chip-pill{ background:#f1f5f9; border-radius:999px; padding:2px 6px; font-size:11px; font-weight:700; }
 
-        .fm-city-list{ display:flex; flex-direction:column; gap:8px; }
-        .fm-city{ border:1px solid #e5e7eb; border-radius:10px; padding:8px 10px; display:flex; gap:10px; align-items:flex-start; background:#fff; }
-        .fm-city.is-checked{ border-color:#0ea5e9; box-shadow:0 0 0 2px rgba(14,165,233,.15) inset; }
-        .fm-city-main{ display:flex; align-items:center; justify-content:space-between; width:100%; gap:8px; }
-        .fm-city-title{ font-size:13px; display:flex; align-items:center; gap:6px; }
-        .fm-city-hotels{ color:#64748b; }
-        .fm-city-right{ display:flex; align-items:center; gap:6px; }
+        /* Pax par hôtel */
+        .fm-hotels-list{ display:flex; flex-direction:column; gap:12px; }
+        .fm-hotel-block{ border:1px solid #e5e7eb; border-radius:10px; overflow:hidden; }
+        .fm-hotel-head{ display:flex; align-items:center; justify-content:space-between; padding:8px 10px; background:#f8fafc; border-bottom:1px dashed #e5e7eb; }
+        .fm-hotel-body{ display:flex; flex-direction:column; }
+        .fm-passenger{ display:flex; gap:10px; padding:8px 10px; border-top:1px dashed #eef2f7; align-items:flex-start; }
+        .fm-passenger:first-of-type{ border-top:none; }
+        .fm-passenger.is-checked{ background:#fbfffe; }
+        .fm-passenger-main{ display:flex; flex-direction:column; width:100%; gap:8px; }
+        .fm-passenger-name{ font-size:13px; font-weight:600; }
 
-        .fm-summary{ background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:10px; }
-        .fm-summary-title{ font-weight:800; font-size:14px; }
-        .fm-summary-row{ display:flex; align-items:center; justify-content:space-between; font-size:13px; padding:4px 0; border-bottom:1px dashed #eef2f7; }
-        .fm-summary-row:last-of-type{ border-bottom:none; }
-        .fm-summary-sep{ height:1px; background:#eef2f7; }
-        .fm-summary-kpi{ display:flex; gap:12px; }
-        .kpi{ flex:1; text-align:center; background:#f8fafc; border:1px solid #e5e7eb; border-radius:10px; padding:10px; }
-        .kpi-num{ font-size:22px; font-weight:800; }
-        .kpi-label{ font-size:12px; color:#64748b; }
+        /* Ligne resa (nom + pax + bouton obs) */
+        .fm-passenger-name--resa{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        .fm-resa-name{ font-weight:700; }
+        .fm-resa-pax{ font-size:12px; font-weight:700; background:#f1f5f9; border-radius:999px; padding:2px 6px; }
 
-        .fm-summary-input label{ font-size:12px; color:#475569; margin-bottom:4px; display:block; }
-        .fm-observ{ margin-top:12px; background:#fff7ed; border:1px solid #fed7aa; border-radius:12px; padding:10px; }
-        .fm-observ-title{ font-weight:800; font-size:13px; color:#9a3412; margin-bottom:6px; }
-        .fm-observ-list{ display:flex; flex-direction:column; gap:6px; font-size:12px; color:#7c2d12; }
-        .fm-observ-item b{ margin-right:6px; }
-
-        /* Responsive */
-        @media (max-width: 1100px){
-          .fm-body{ grid-template-columns: 1fr; }
+        .fm-resa-caret{
+          display:inline-flex; align-items:center; justify-content:center;
+          width:22px; height:22px; border-radius:6px; border:1px solid #F59E0B;
+          background:#FFFBEB; cursor:pointer; padding:0;
+        }
+        .fm-resa-caret:hover{ background:#FEF3C7; }
+        .warn-icon{ font-size:14px; line-height:1; }
+        .fm-obs-panel{
+          background:#FFFBEB; border:1px dashed #F59E0B; border-radius:8px;
+          padding:8px 10px; color:#7C2D12; font-size:12px; white-space:pre-wrap;
         }
       `}</style>
     </div>

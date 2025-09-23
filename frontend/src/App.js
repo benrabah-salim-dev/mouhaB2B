@@ -25,7 +25,7 @@ import AgenceRessourcesHub from "./RessourcesAgence";
 import AjouterVehicule from "./AjouterVehicule";
 import RessourcesVehicules from "./RessourcesVehicules";
 import RessourcesChauffeurs from "./RessourcesChauffeurs";
-import FichesMouvementList from "./FichesMouvemenrList";
+import FichesMouvementList from "./components/FicheMouvementList/FichesMouvementList";
 import OrdresMissionList from "./OrdresMissionList";
 import FicheMouvement from "./components/FicheMouvement/FicheMouvement";
 
@@ -77,6 +77,7 @@ export default function App() {
           <Route path="/agence/:agence_id/ressources" element={<AgenceRessourcesHub />} />
           <Route path="/agence/:agence_id/ressources/vehicules" element={<RessourcesVehicules />} />
           <Route path="/agence/:agence_id/ressources/chauffeurs" element={<RessourcesChauffeurs />} />
+          
         </Route>
 
         {/* CRUD Agences (superadmin only) */}

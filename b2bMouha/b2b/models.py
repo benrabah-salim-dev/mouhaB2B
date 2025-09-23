@@ -3,6 +3,7 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 from .utils import generate_unique_reference
 
 # =========================
@@ -79,6 +80,17 @@ class Touriste(models.Model):
 
 
 # =========================
+# Zone (référentiel)
+# =========================
+
+class Zone(models.Model):
+    nom = models.CharField(max_length=120, unique=True)
+
+    def __str__(self):
+        return self.nom
+
+
+# =========================
 # Dossier
 # =========================
 
@@ -99,7 +111,7 @@ class Dossier(models.Model):
     nombre_personnes_retour = models.PositiveIntegerField()
     tour_operateur = models.CharField(max_length=255, blank=True, null=True)
 
-    # ✅ NOUVEAU : on persiste ce qui vient de l'import
+    # persistance import
     observation = models.TextField(null=True, blank=True)
 
     def __str__(self):
@@ -286,17 +298,133 @@ class FicheMouvementItem(models.Model):
 
     def __str__(self):
         return f"Item fiche #{self.fiche_id} – dossier {self.dossier.reference}"
-    
-    
+
 
 # =========================
-# Offres de véhicules (Rentout / Rideshare)
+# Produits (Excursions / Navettes)
 # =========================
 
+class Produit(models.Model):
+    EXCURSION = "EXCURSION"
+    NAVETTE   = "NAVETTE"
+    KIND_CHOICES = [(EXCURSION, "Excursion"), (NAVETTE, "Navette")]
+
+    kind = models.CharField(max_length=10, choices=KIND_CHOICES)
+
+    # propriétaire / opérateur
+    agence = models.ForeignKey(AgenceVoyage, on_delete=models.CASCADE, related_name="produits")
+
+    # commun
+    titre = models.CharField(max_length=160)
+    description = models.TextField(blank=True, default="")
+    heure_debut = models.TimeField()
+    heure_fin   = models.TimeField()
+    capacite    = models.PositiveIntegerField(default=0)  # 0 = illimité/non géré
+
+    # Excursion
+    zone_depart = models.ForeignKey(Zone, on_delete=models.SET_NULL, null=True, blank=True, related_name="produits_depart")
+    avec_repas  = models.BooleanField(default=False)
+    DEMI_JOURNEE = "HALF"
+    JOURNEE      = "FULL"
+    duree = models.CharField(max_length=8, choices=[(DEMI_JOURNEE, "Demi-journée"), (JOURNEE, "Journée entière")], blank=True, default="")
+    theme = models.CharField(max_length=160, blank=True, default="")  # itinéraire/thème global
+
+    # Navette
+    zone_origine     = models.ForeignKey(Zone, on_delete=models.SET_NULL, null=True, blank=True, related_name="produits_origine")
+    zone_destination = models.ForeignKey(Zone, on_delete=models.SET_NULL, null=True, blank=True, related_name="produits_destination")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        if self.kind == self.EXCURSION and not self.zone_depart:
+            raise ValidationError("zone_depart est requise pour une Excursion.")
+        if self.kind == self.NAVETTE and not (self.zone_origine and self.zone_destination):
+            raise ValidationError("zone_origine et zone_destination sont requises pour une Navette.")
+
+    def __str__(self):
+        return f"[{self.kind}] {self.titre}"
+
+
+class ProduitEtape(models.Model):
+    produit = models.ForeignKey(Produit, on_delete=models.CASCADE, related_name="etapes")
+    ordre = models.PositiveIntegerField()
+    titre = models.CharField(max_length=160)
+    description = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["ordre"]
+
+    def __str__(self):
+        return f"{self.produit_id} - {self.ordre} - {self.titre}"
+
+
+class ProduitTarif(models.Model):
+    """
+    Tarifs par zone ET par agence (chaque agence fixe ses tarifs).
+    Si plusieurs agences vendent le même Produit, elles peuvent définir leurs prix indépendamment.
+    """
+    produit = models.ForeignKey(Produit, on_delete=models.CASCADE, related_name="tarifs")
+    agence  = models.ForeignKey(AgenceVoyage, on_delete=models.CASCADE, related_name="produit_tarifs")
+    zone    = models.ForeignKey(Zone, on_delete=models.CASCADE, related_name="produit_tarifs")
+    prix_adulte = models.DecimalField(max_digits=10, decimal_places=2)
+    prix_enfant = models.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        unique_together = ("produit", "agence", "zone")
+
+    def __str__(self):
+        return f"{self.produit.titre} [{self.agence.nom}] @ {self.zone.nom}"
+
+
+class ReservationProduit(models.Model):
+    """
+    Réservation réelle (production) : lie un Dossier à un Produit pour une date,
+    avec zone pickup, quantités, prix appliqués (snapshot), total, et éventuellement mission liée.
+    """
+    dossier = models.ForeignKey(Dossier, on_delete=models.CASCADE, related_name="reservations_produits")
+    produit = models.ForeignKey(Produit, on_delete=models.CASCADE, related_name="reservations")
+    agence  = models.ForeignKey(AgenceVoyage, on_delete=models.CASCADE, related_name="reservations_produits")
+
+    date_service = models.DateField()
+    heure_debut  = models.TimeField(null=True, blank=True)
+    heure_fin    = models.TimeField(null=True, blank=True)
+
+    zone_pickup = models.ForeignKey(Zone, on_delete=models.SET_NULL, null=True, blank=True, related_name="reservations_pickup")
+
+    nb_adultes = models.PositiveIntegerField(default=0)
+    nb_enfants = models.PositiveIntegerField(default=0)
+
+    # snapshot des prix (issus de ProduitTarif au moment de la résa)
+    prix_adulte_applique = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    prix_enfant_applique = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    total_ttc = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+
+    # Suivi opérationnel: on peut lier la mission générée
+    mission = models.ForeignKey(Mission, on_delete=models.SET_NULL, null=True, blank=True, related_name="reservations_sources")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def compute_total(self):
+        a = self.prix_adulte_applique or 0
+        e = self.prix_enfant_applique or 0
+        return (a * (self.nb_adultes or 0)) + (e * (self.nb_enfants or 0))
+
+    def save(self, *args, **kwargs):
+        if not self.total_ttc:
+            self.total_ttc = self.compute_total()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Resa {self.produit.titre} / {self.dossier.reference} ({self.date_service})"
+
+
+# =========================
+# Offres inter-agences (Rentout / Rideshare) — lié à la production réelle
+# =========================
 class VehicleOffer(models.Model):
     MODE_CHOICES = (
-        ("rentout", "Rentout"),     # location du véhicule complet
-        ("rideshare", "Rideshare"), # partage par places sur trajet précis
+        ("rentout", "Rentout"),     # location véhicule complet (journée/slot)
+        ("rideshare", "Rideshare"), # vente de places sur un trajet réel
     )
 
     vehicule = models.ForeignKey(Vehicule, on_delete=models.CASCADE, related_name="offers")
@@ -305,17 +433,27 @@ class VehicleOffer(models.Model):
     start = models.DateTimeField()
     end = models.DateTimeField()
 
-    # Rideshare uniquement
+    # Compat rétro: on garde origin/destination en texte
     origin = models.CharField(max_length=100, blank=True, default="")
     destination = models.CharField(max_length=100, blank=True, default="")
-    seats_total = models.PositiveIntegerField(null=True, blank=True)   # par défaut = vehicule.capacite
-    seats_reserved = models.PositiveIntegerField(default=0)            # nb places déjà “prises” (réservées)
 
-    # Rentout & Rideshare
-    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    # Nouveau: zones référentielles (facultatif)
+    origin_zone = models.ForeignKey(Zone, on_delete=models.SET_NULL, null=True, blank=True, related_name="offers_origin")
+    destination_zone = models.ForeignKey(Zone, on_delete=models.SET_NULL, null=True, blank=True, related_name="offers_destination")
+
+    # Capacités / places (rideshare)
+    seats_total = models.PositiveIntegerField(null=True, blank=True)   # défaut = vehicule.capacite
+    seats_reserved = models.PositiveIntegerField(default=0)
+
+    # Tarifs (chaque agence met ses propres tarifs)
+    # rentout: prix global; rideshare: prix par place (adulte/enfant)
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # rentout (forfait)
+    price_per_adult = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # rideshare
+    price_per_child = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)  # rideshare
     currency = models.CharField(max_length=5, default="TND")
+
     notes = models.TextField(blank=True, default="")
-    is_public = models.BooleanField(default=True)   # visible sans login
+    is_public = models.BooleanField(default=True)
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -337,8 +475,4 @@ class VehicleOffer(models.Model):
         return max(0, base - used)
 
     def overlaps(self, s: "datetime", e: "datetime") -> bool:
-        """
-        Chevauchement de fenêtres temporelles : [start,end] ∩ [s,e] ≠ ∅
-        """
         return (self.start <= e) and (self.end >= s)
-

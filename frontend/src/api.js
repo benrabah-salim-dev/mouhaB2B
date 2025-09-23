@@ -4,7 +4,7 @@ import axios from "axios";
 /** Construit une base stable depuis .env (prend BASE ou URL), et ajoute /api si absent */
 function buildApiBase() {
   let base =
-    (process.env.REACT_APP_API_BASE || process.env.REACT_APP_API_URL || "http://127.0.0.1:8000").trim();
+     process.env.REACT_APP_API_URL ;
   base = base.replace(/\/+$/, ""); // pas de slash final
   // Si /api n'est pas présent à la fin, on l'ajoute
   if (!/\/api($|\/)/.test(base)) base = base + "/api";
