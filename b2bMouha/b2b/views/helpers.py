@@ -1,12 +1,13 @@
-# b2b/views/helpers.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from typing import Any, Iterable, Optional
+import re
+
+import pandas as pd
 from django.core.exceptions import PermissionDenied
 from django.utils import timezone
 from rest_framework.permissions import BasePermission
-
 
 # ---------- Rôles / agence ----------
 def _user_role(user) -> Optional[str]:
@@ -15,7 +16,6 @@ def _user_role(user) -> Optional[str]:
         return None
     if getattr(user, "is_superuser", False):
         return "superadmin"
-    # profile.role si disponible
     prof = getattr(user, "profile", None)
     return getattr(prof, "role", None)
 
@@ -49,7 +49,6 @@ def _ensure_same_agence_or_superadmin(request, agence_obj_or_id: Any):
     if int(my_agence.id) != int(target_id):
         raise PermissionDenied("Vous n'avez pas accès à cette agence.")
 
-
 # ---------- Références ----------
 def generate_unique_reference(prefix: str, model_cls) -> str:
     """
@@ -65,7 +64,6 @@ def generate_unique_reference(prefix: str, model_cls) -> str:
             return ref
         i += 1
 
-
 # ---------- Fuzzy 'find_best_match' light ----------
 def find_best_match(keywords: Iterable[str], columns: Iterable[str], min_score: float = 0.30) -> Optional[str]:
     """
@@ -75,27 +73,23 @@ def find_best_match(keywords: Iterable[str], columns: Iterable[str], min_score: 
     if not keywords or not columns:
         return None
 
-    # Normalisation
     def norm(s: str) -> str:
         return "".join(ch for ch in str(s).strip().lower())
 
     kw_norm = [norm(k) for k in keywords if k]
     cols = list(columns)
 
-    # 1) égalité stricte normalisée
     for c in cols:
         cn = norm(c)
         if any(cn == k for k in kw_norm):
             return c
 
-    # 2) substring
     for c in cols:
         cn = norm(c)
         if any(k in cn for k in kw_norm):
             return c
 
     return None
-
 
 def _parse_int_cell(v: Any) -> int:
     """Retourne un entier >=0 depuis une cellule qui peut contenir texte/float/None."""
@@ -104,7 +98,6 @@ def _parse_int_cell(v: Any) -> int:
     s = str(v).strip()
     if not s or s.lower() in {"nan", "none", "null", "-"}:
         return 0
-    # garde uniquement chiffres (gère '12 pax', 'BB: 1', '03', etc.)
     m = re.findall(r"\d+", s)
     if not m:
         try:
@@ -115,3 +108,22 @@ def _parse_int_cell(v: Any) -> int:
         return max(0, int(m[0]))
     except Exception:
         return 0
+
+# ---------- Pool "non traités" (source de vérité côté serveur) ----------
+def queryset_dossiers_non_traite(agence):
+    """
+    Retourne un QuerySet des Dossier de l'agence passés dans AUCUN FicheMouvementItem.
+    Utilisé pour masquer les dossiers déjà affectés à une fiche.
+    """
+    from django.db.models import Exists, OuterRef
+    from b2b.models import Dossier, FicheMouvementItem
+
+    used_qs = FicheMouvementItem.objects.filter(dossier_id=OuterRef("pk"))
+    return (
+        Dossier.objects
+        .filter(agence=agence)
+        .annotate(is_used=Exists(used_qs))
+        .filter(is_used=False)
+        .select_related("hotel")
+        .order_by("-heure_arrivee", "-heure_depart", "-id")
+    )

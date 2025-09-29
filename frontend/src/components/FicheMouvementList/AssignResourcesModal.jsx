@@ -1,3 +1,4 @@
+// src/components/FicheMouvementList/AssignResourcesModal.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import api from "../../api";
 
@@ -24,8 +25,12 @@ const fmtHour = (d) =>
 const isoLocal = (d) => (d ? new Date(d).toISOString().slice(0, 16) : "");
 
 export default function AssignResourcesModal({ mission, onClose, onCompleted }) {
+  // NOTE: ici "mission" est en réalité la FICHE côté liste (id, type, aeroport, date_debut, date_fin…)
+  const fiche = mission || {};
   const { agence_id: myAgenceId } = getUser();
+
   const [mode, setMode] = useState("my_fleet"); // my_fleet | rentout | rideshare
+  const [trajet, setTrajet] = useState(fiche.aeroport || "");
 
   // filtres communs
   const [hideMine, setHideMine] = useState(true);
@@ -49,8 +54,8 @@ export default function AssignResourcesModal({ mission, onClose, onCompleted }) 
   const [rideshareSeats, setRideshareSeats] = useState("");
 
   // fenêtre temporelle (rideshare)
-  const date_debut = useMemo(() => (mission?.date_debut ? new Date(mission.date_debut) : null), [mission]);
-  const date_fin = useMemo(() => (mission?.date_fin ? new Date(mission.date_fin) : null), [mission]);
+  const date_debut = useMemo(() => (fiche?.date_debut ? new Date(fiche.date_debut) : null), [fiche]);
+  const date_fin = useMemo(() => (fiche?.date_fin ? new Date(fiche.date_fin) : null), [fiche]);
 
   // loaders
   const loadChauffeurs = async () => {
@@ -110,50 +115,53 @@ export default function AssignResourcesModal({ mission, onClose, onCompleted }) 
       } catch (e) { console.error("Erreur chargement ressources", e); }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, typeVehicule, capaciteMin, destination, seatsMin, hideMine, mission?.id]);
+  }, [mode, typeVehicule, capaciteMin, destination, seatsMin, hideMine, fiche?.id]);
 
-  // Confirms
-  const confirmMyFleet = async () => {
+  // ====== CONFIRMS ======
+
+  // → back unifié: POST /fiches-mouvement/<id>/assign-resources/
+  //    Body: { vehicule_id?, chauffeur_id?, trajet? }
+  const confirmAssign = async (vehiculeId, chauffeurId) => {
     try {
-      const resp = await api.post(
-        `missions/${mission.id}/generate-om/`,
-        { vehicule, chauffeur },
-        { responseType: "blob" }
-      );
-      const url = window.URL.createObjectURL(new Blob([resp.data]));
-      const a = document.createElement("a");
-      a.href = url; a.setAttribute("download", `ordre_mission_${mission.id}.pdf`);
-      document.body.appendChild(a); a.click(); a.remove();
+      await api.post(`fiches-mouvement/${fiche.id}/assign-resources/`, {
+        vehicule_id: vehiculeId || null,
+        chauffeur_id: chauffeurId || null,
+        trajet: (trajet || "").trim(),
+      });
+      alert("Ressources affectées et missions créées avec succès.");
       onCompleted?.();
-    } catch (e) { console.error(e); alert("Erreur génération OM."); }
+    } catch (e) {
+      console.error(e);
+      alert(e?.response?.data?.detail || e?.response?.data?.error || "Erreur lors de l’affectation.");
+    }
+  };
+
+  const confirmMyFleet = async () => {
+    if (!vehicule || !chauffeur) { alert("Sélectionnez un véhicule et un chauffeur."); return; }
+    await confirmAssign(vehicule, chauffeur);
   };
 
   const confirmRentout = async () => {
-    try {
-      const vehiculeId = selectedOfferId;
-      const resp = await api.post(
-        `missions/${mission.id}/generate-om/`,
-        { vehicule: vehiculeId, chauffeur },
-        { responseType: "blob" }
-      );
-      const url = window.URL.createObjectURL(new Blob([resp.data]));
-      const a = document.createElement("a");
-      a.href = url; a.setAttribute("download", `ordre_mission_${mission.id}.pdf`);
-      document.body.appendChild(a); a.click(); a.remove();
-      onCompleted?.();
-    } catch (e) { console.error(e); alert("Erreur génération OM."); }
+    if (!selectedOfferId) { alert("Sélectionnez une offre Rentout."); return; }
+    if (!chauffeur) { alert("Sélectionnez un chauffeur de votre agence."); return; }
+    // ici selectedOfferId correspond au véhicule loué
+    await confirmAssign(selectedOfferId, chauffeur);
   };
 
   const confirmRideshare = async () => {
     try {
       const seats = Number(rideshareSeats || 0);
+      if (!selectedOfferId || seats <= 0) { alert("Sélectionnez une offre et un nombre de places."); return; }
       await api.post(`offers/${selectedOfferId}/book-seats/`, { seats });
-      alert(`Rideshare confirmé: ${seats} place(s) réservées sur l'offre #${selectedOfferId}.`);
-      onCompleted?.();
-    } catch (e) { console.error(e); alert("Erreur lors de la réservation."); }
+      // on peut AUSSI créer les missions sans OM (pas de véhicule/driver)
+      await confirmAssign(null, null);
+    } catch (e) {
+      console.error(e);
+      alert("Erreur lors de la réservation rideshare.");
+    }
   };
 
-  // Rendus
+  // ====== UI Tables ======
   const renderOffersTable = (offers, isRideShare) => (
     <div className="table-responsive">
       <table className="table table-hover align-middle">
@@ -213,7 +221,7 @@ export default function AssignResourcesModal({ mission, onClose, onCompleted }) 
         {mode === "rentout" ? (
           <small>Le mode <b>Rentout</b> n’utilise pas de dates ni de destination. Chauffeur requis.</small>
         ) : mode === "rideshare" ? (
-          <small>Le mode <b>Rideshare</b> utilise la fenêtre de la mission et peut filtrer par destination (pas de chauffeur requis).</small>
+          <small>Le mode <b>Rideshare</b> utilise la fenêtre de la fiche et peut filtrer par destination (pas de chauffeur requis).</small>
         ) : (
           <small>Le mode <b>Ma flotte</b> requiert un véhicule et un chauffeur de votre agence.</small>
         )}
@@ -261,6 +269,17 @@ export default function AssignResourcesModal({ mission, onClose, onCompleted }) 
             <label htmlFor="hideMine" className="form-check-label">Masquer mon agence</label>
           </div>
         )}
+      </div>
+
+      {/* Trajet libre (facultatif) */}
+      <div className="mb-3">
+        <label className="form-label">Trajet</label>
+        <input
+          className="form-control"
+          placeholder="ex: TUN → Hammamet / Ramassage hôtels…"
+          value={trajet}
+          onChange={(e) => setTrajet(e.target.value)}
+        />
       </div>
 
       {mode === "my_fleet" && (

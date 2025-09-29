@@ -5,6 +5,8 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from .utils import generate_unique_reference
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 
 # =========================
 # Tiers
@@ -240,6 +242,13 @@ class Mission(models.Model):
 class OrdreMission(models.Model):
     reference = models.CharField(max_length=50, unique=True, db_index=True)
     mission = models.ForeignKey(Mission, on_delete=models.CASCADE, related_name="ordres_mission")
+    # L’OM peut être créé depuis une fiche → lien optionnel
+    fiche = models.ForeignKey(
+        "FicheMouvement",
+        on_delete=models.CASCADE,
+        null=True, blank=True,
+        related_name="ordres_mission",
+    )
     date_depart = models.DateTimeField()
     date_retour = models.DateTimeField()
     vehicule = models.ForeignKey(Vehicule, on_delete=models.CASCADE, null=True, blank=True)
@@ -253,6 +262,7 @@ class OrdreMission(models.Model):
 
     def __str__(self):
         return f"Ordre de mission {self.reference} - {self.trajet}"
+
 
 
 # =========================
@@ -286,6 +296,7 @@ class FicheMouvement(models.Model):
     aeroport = models.CharField(max_length=100, blank=True, default="")
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    hotel_schedule = models.JSONField(default=list, blank=True, null=True)  # [{hotel:"...", time:"HH:MM"}]
 
     def __str__(self):
         base = f"[{self.get_type_display()}] {self.aeroport or '-'} {self.date}"
@@ -295,9 +306,23 @@ class FicheMouvement(models.Model):
 class FicheMouvementItem(models.Model):
     fiche = models.ForeignKey(FicheMouvement, on_delete=models.CASCADE, related_name="items")
     dossier = models.ForeignKey(Dossier, on_delete=models.CASCADE, related_name="fiche_items")
+    
+    class Meta:
+        indexes = [models.Index(fields=["dossier"])]
 
     def __str__(self):
         return f"Item fiche #{self.fiche_id} – dossier {self.dossier.reference}"
+    
+
+@receiver(post_delete, sender=FicheMouvementItem)
+def _delete_fiche_if_empty(sender, instance, **kwargs):
+    """
+    Si un item est supprimé et que la fiche n’a plus ni items ni OM liés,
+    on supprime la fiche devenue inutile.
+    """
+    fiche = instance.fiche
+    if fiche and not fiche.items.exists() and not fiche.ordres_mission.exists():
+        fiche.delete()
 
 
 # =========================

@@ -1,3 +1,4 @@
+// src/components/FicheMouvementList/FichesMouvementList.jsx
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../../api";
@@ -51,10 +52,9 @@ export default function FichesMouvementList() {
   const [loading, setLoading] = useState(false);
   const [selectedMission, setSelectedMission] = useState(null);
   const [obsFullText, setObsFullText] = useState(null);
-  
 
-  // NOUVELLE RÈGLE: Début = date_debut telle quelle (pas d’offset +60)
-  const END_OFFSET_MIN = 180; // Fin = Début + 3h
+  // Début = tel que reçu ; Fin = +3h (affichage)
+  const END_OFFSET_MIN = 180;
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -70,61 +70,23 @@ export default function FichesMouvementList() {
 
   useEffect(() => { fetchList(); }, [fetchList]);
 
-
-
-  // helpers (en haut du fichier si tu veux)
-const isNextDay = (start, end) => {
-  if (!start || !end) return false;
-  const s = new Date(start);
-  const e = new Date(end);
-  return (
-    e.getFullYear() !== s.getFullYear() ||
-    e.getMonth() !== s.getMonth() ||
-    e.getDate() !== s.getDate()
-  );
-};
-
-
-
-  // Déverrouiller / retirer le PDF OM
-  const deleteOM = async (mission) => {
-    try {
-      await api.post(`missions/${mission.id}/unlock-om/`);
-      setItems((prev) => prev.map((i) => (i.id === mission.id ? { ...i, ordre_mission_genere: false } : i)));
-    } catch (e) { console.error(e); }
+  const isNextDay = (start, end) => {
+    if (!start || !end) return false;
+    const s = new Date(start);
+    const e = new Date(end);
+    return (
+      e.getFullYear() !== s.getFullYear() ||
+      e.getMonth() !== s.getMonth() ||
+      e.getDate() !== s.getDate()
+    );
   };
 
-  // Suppression d’une fiche (sans POST /delete/)
+  // Suppression d’une fiche (appelle le vrai endpoint DRF)
   const deleteFiche = async (fiche) => {
     if (!window.confirm(`Supprimer la fiche ${fiche.reference} ?`)) return;
-
-    const tryDelete = async (url) => {
-      try {
-        await api.delete(url);
-        return true;
-      } catch (e) {
-        const status = e?.response?.status;
-        if (status === 401) {
-          alert("Session expirée — veuillez vous reconnecter.");
-          return false;
-        }
-        if (status === 404) return false; // on essaie l’autre endpoint
-        throw e; // autre erreur: remonte
-      }
-    };
-
     try {
-      // 1) endpoint DRF classique / detail
-      let ok = await tryDelete(`fiches-mouvement/${fiche.id}/`);
-      // 2) fallback si l’autre route accepte aussi DELETE
-      if (!ok) ok = await tryDelete(`fiches-mouvement-list/${fiche.id}/`);
-
-      if (!ok) {
-        alert("Impossible de supprimer la fiche (endpoint introuvable ou session expirée).");
-        return;
-      }
-
-      setItems((prev) => prev.filter((x) => x.id !== fiche.id));
+      await api.delete(`fiches-mouvement/${fiche.id}/`);
+      await fetchList(); // on recharge depuis le back pour confirmer la suppression
     } catch (e) {
       console.error(e);
       const detail =
@@ -163,48 +125,39 @@ const isNextDay = (start, end) => {
           </thead>
           <tbody>
             {!loading && items.map((it) => {
-              // Début = tel que reçu
               const startDisplayed = it.date_debut ? new Date(it.date_debut) : null;
-              // Fin = Début + 3h
-              const END_OFFSET_MIN = 180;
-const endDisplayed = startDisplayed
-  ? new Date(startDisplayed.getTime() + END_OFFSET_MIN * 60 * 1000)
-  : null;
-
-  const endIsNextDay = isNextDay(startDisplayed, endDisplayed);
-
-              const isLocked = it.ordre_mission_genere;
+              const endDisplayed = startDisplayed
+                ? new Date(startDisplayed.getTime() + END_OFFSET_MIN * 60 * 1000)
+                : null;
+              const endIsNextDay = isNextDay(startDisplayed, endDisplayed);
 
               return (
-                <tr key={it.id} className={isLocked ? "table-secondary opacity-75" : ""}>
+                <tr key={it.id}>
                   <td>{it.reference}</td>
                   <td><BadgeType t={it.type} /></td>
                   <td>{it.aeroport}</td>
                   <td>{fmtHour(startDisplayed)}</td>
                   <td>
-  {fmtHour(endDisplayed)}
-  {endIsNextDay && (
-    <span className="badge bg-warning text-dark ms-1" title="Le vol termine le lendemain">
-      +1j
-    </span>
-  )}
-</td>
-
+                    {fmtHour(endDisplayed)}
+                    {endIsNextDay && (
+                      <span className="badge bg-warning text-dark ms-1" title="Le vol termine le lendemain">
+                        +1j
+                      </span>
+                    )}
+                  </td>
                   <td>{it.hotel || "—"}</td>
                   <td>{it.pax ?? "—"}</td>
                   <td>{it.clients || "—"}</td>
                   <td><ObservationCell text={it.observation} max={60} onOpen={setObsFullText} /></td>
                   <td className="text-end">
                     <div className="btn-group">
-                      {!isLocked ? (
-                        <button className="btn btn-sm btn-success" onClick={() => setSelectedMission(it)}>
-                          📄 Choisir ressources
-                        </button>
-                      ) : (
-                        <button className="btn btn-sm btn-outline-danger" onClick={() => deleteOM(it)}>
-                          ❌ Supprimer OM
-                        </button>
-                      )}
+                      <button
+                        className="btn btn-sm btn-success"
+                        onClick={() => setSelectedMission(it)}
+                        title="Choisir les ressources (ma flotte / rentout / rideshare)"
+                      >
+                        📄 Choisir ressources
+                      </button>
                       <button
                         className="btn btn-sm btn-outline-secondary"
                         onClick={() => deleteFiche(it)}
@@ -219,6 +172,9 @@ const endDisplayed = startDisplayed
             })}
             {loading && (
               <tr><td colSpan={10} className="text-center py-4">Chargement…</td></tr>
+            )}
+            {!loading && !items.length && (
+              <tr><td colSpan={10} className="text-center text-muted py-4">Aucune fiche trouvée.</td></tr>
             )}
           </tbody>
         </table>
@@ -240,7 +196,7 @@ const endDisplayed = startDisplayed
       {/* Modal Affectation */}
       {selectedMission && (
         <AssignResourcesModal
-          mission={selectedMission}
+          mission={selectedMission}     // ← on passe la fiche telle quelle
           onClose={() => setSelectedMission(null)}
           onCompleted={() => {
             fetchList();

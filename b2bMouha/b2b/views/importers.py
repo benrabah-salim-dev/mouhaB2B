@@ -19,6 +19,19 @@ from rest_framework.views import APIView
 from b2b.models import AgenceVoyage, Dossier, Hotel, Vehicule, Chauffeur
 from .helpers import _ensure_same_agence_or_superadmin
 
+import unicodedata
+from typing import Dict, Any, List, Tuple
+
+from django.shortcuts import get_object_or_404
+from django.db import transaction
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from openpyxl import load_workbook  # Assure-toi que openpyxl est bien dans requirements
+from b2b.models import AgenceVoyage, Vehicule
+
+
 # ---------------------------------------------------------------------
 # Helpers généraux (normalisation / parsers)
 # ---------------------------------------------------------------------
@@ -585,97 +598,192 @@ class ImporterDossierAPIView(APIView):
 # ---------------------------------------------------------------------
 # Import Véhicules
 # ---------------------------------------------------------------------
+# b2b/views/importers.py  — remplacement de la classe ImporterVehiculesAPIView
+
+
+def _norm(s: Any) -> str:
+    """Normalise un en-tête: str, sans accents, uppercase, alphanum/underscore."""
+    if s is None:
+        return ""
+    s = str(s).strip()
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    out = []
+    for ch in s:
+        if ch.isalnum():
+            out.append(ch)
+        else:
+            out.append("_")
+    return "".join(out).strip("_").upper()
+
+# Dictionnaire de synonymes acceptés
+HEADER_ALIASES: Dict[str, List[str]] = {
+    "IMMATRICULATION": ["IMMATRICULATION", "IMMAT", "PLAQUE", "MATRICULE", "REG", "REG_NO", "REGISTRATION", "NUM_IMMATRICULATION"],
+    "MARQUE": ["MARQUE", "BRAND", "MAKE"],
+    "MODELE": ["MODELE", "MODEL", "MODELE_", "MODElE", "MODÈLE"],
+    "TYPE": ["TYPE", "CATEGORIE", "CATEGORY", "VEHICLE_TYPE"],
+    "CAPACITE": ["CAPACITEE","CAPACITE", "CAPACITE_", "CAPACITY", "SEATS", "NB_PLACES", "PLACES"],
+    "ANNEE": ["ANNEE", "ANNEE_", "YEAR"],
+}
+
+# Colonnes minimales requises
+REQUIRED_KEYS = ["IMMATRICULATION", "MARQUE", "MODELE"]
+
+def _build_header_map(header_cells: List[Any]) -> Dict[str, int]:
+    """
+    Retourne un mapping logique -> index colonne à partir des libellés réels.
+    Ex: {"IMMATRICULATION": 0, "MARQUE": 1, ...}
+    """
+    # Normalise les en-têtes présents dans le fichier
+    present = { _norm(v): idx for idx, v in enumerate(header_cells) if _norm(v) }
+    mapping: Dict[str, int] = {}
+
+    for logical, aliases in HEADER_ALIASES.items():
+        for alias in aliases:
+            norm_alias = _norm(alias)
+            if norm_alias in present:
+                mapping[logical] = present[norm_alias]
+                break
+
+    return mapping
+
+def _cell_val(cell) -> Any:
+    if cell is None:
+        return None
+    v = cell.value
+    if isinstance(v, str):
+        return v.strip()
+    return v
+
 class ImporterVehiculesAPIView(APIView):
-    parser_classes = [MultiPartParser]
+    """
+    POST /api/importer-vehicules/
+      form-data:
+        - file: xlsx/xls
+        - agence: <id>
+    Retour:
+      {
+        "vehicules_crees": [...],
+        "vehicules_mis_a_jour": [...],
+        "lignes_ignorees": [{"ligne": N, "raison": "..."}]
+      }
+    """
     permission_classes = [IsAuthenticated]
 
-    HEADERS = {
-        "immatriculation": ["IMMATRICULATION", "Immatriculation", "Plaque", "Matricule", "Plate"],
-        "marque": ["MARQUE", "Marque", "Brand", "Fabricant"],
-        "model": ["MODELE", "Modèle", "Model", "Type"],
-        "capacite": ["CAPACITE", "Capacité", "Capacity", "Seats", "Places"],
-    }
-
-    def _find_col(self, df, candidates):
-        for c in candidates:
-            if c in df.columns:
-                return c
-        lowered = {str(col).strip().lower(): col for col in df.columns}
-        for c in candidates:
-            key = str(c).strip().lower()
-            if key in lowered:
-                return lowered[key]
-        return None
-
-    def _clean_str(self, val):
-        if pd.isna(val) or val is None:
-            return ""
-        return str(val).strip()
-
-    def post(self, request, *args, **kwargs):
-        fichier = request.FILES.get("file")
-        agence_id = request.data.get("agence")
-        if not fichier:
-            return Response({"error": "Aucun fichier envoyé."}, status=400)
+    @transaction.atomic
+    def post(self, request):
+        file = request.FILES.get("file")
+        agence_id = request.POST.get("agence") or request.data.get("agence")
+        if not file:
+            return Response({"error": "Aucun fichier reçu."}, status=400)
         if not agence_id:
-            return Response({"error": "Aucune agence spécifiée."}, status=400)
-        _ensure_same_agence_or_superadmin(request, int(agence_id))
+            return Response({"error": "Paramètre 'agence' requis."}, status=400)
+
         agence = get_object_or_404(AgenceVoyage, id=agence_id)
+
         try:
-            df = pd.read_excel(fichier)
+            wb = load_workbook(file, data_only=True)
+            ws = wb.active
         except Exception as e:
-            return Response({"error": f"Erreur lecture fichier Excel: {e}"}, status=400)
+            return Response({"error": f"Fichier illisible ({e})."}, status=400)
 
-        col_immat = self._find_col(df, self.HEADERS["immatriculation"]) 
-        col_marque = self._find_col(df, self.HEADERS["marque"]) 
-        col_model = self._find_col(df, self.HEADERS["model"]) 
-        col_capacite = self._find_col(df, self.HEADERS["capacite"]) 
+        # Trouver la 1ère ligne d'en-têtes non vide
+        header_row_idx = None
+        for i, row in enumerate(ws.iter_rows(min_row=1, max_row=min(20, ws.max_row))):
+            labels = [(_cell_val(c) or "") for c in row]
+            if any(str(v).strip() for v in labels):
+                header_row_idx = i + 1
+                header_cells = labels
+                break
+        if header_row_idx is None:
+            return Response({"error": "Aucune ligne d'en-têtes détectée."}, status=400)
 
-        missing = [k for k, v in {"IMMATRICULATION": col_immat, "MARQUE": col_marque, "MODELE": col_model}.items() if v is None]
+        header_map = _build_header_map(header_cells)
+
+        # Vérifie requis
+        missing = [k for k in REQUIRED_KEYS if k not in header_map]
         if missing:
-            return Response({"error": f"Colonnes manquantes dans le fichier: {', '.join(missing)}"}, status=400)
+            # message clair avec ce qu'on a détecté comme colonnes
+            detected = ", ".join([f"{k}→col{header_map[k]+1}" for k in header_map.keys()])
+            return Response(
+                {"error": f"Colonnes manquantes dans le fichier: {', '.join(missing)}",
+                 "detected": detected},
+                status=400
+            )
 
         created, updated, ignored = [], [], []
-        for idx, row in df.iterrows():
-            immat = self._clean_str(row.get(col_immat))
-            marque = self._clean_str(row.get(col_marque))
-            model = self._clean_str(row.get(col_model))
-            capacite = row.get(col_capacite)
-            try:
-                capacite = int(capacite) if pd.notna(capacite) else None
-            except Exception:
-                capacite = None
 
+        # Parcourt les lignes de données
+        for row_idx in range(header_row_idx + 1, ws.max_row + 1):
+            row = [ _cell_val(c) for c in ws[row_idx] ]
+            def colv(key, default=None):
+                idx = header_map.get(key)
+                if idx is None or idx >= len(row):
+                    return default
+                return row[idx]
+
+            immat = (colv("IMMATRICULATION") or "").strip()
             if not immat:
-                ignored.append({"ligne": idx + 2, "raison": "Immatriculation manquante"})
-                continue
-            if not marque:
-                ignored.append({"ligne": idx + 2, "raison": "Marque manquante"})
-                continue
-            if not model:
-                ignored.append({"ligne": idx + 2, "raison": "Modèle manquant"})
+                ignored.append({"ligne": row_idx, "raison": "Pas d'immatriculation"})
                 continue
 
-            defaults = {"marque": marque, "model": model, "capacite": capacite, "agence": agence}
-            obj, was_created = Vehicule.objects.update_or_create(immatriculation=immat, defaults=defaults)
-            (created if was_created else updated).append(immat)
+            marque = (colv("MARQUE") or "").strip()
+            modele = (colv("MODELE") or "").strip()
+            type_ = (colv("TYPE") or "").strip().lower() or "minibus"
+            try:
+                capacite = int(colv("CAPACITE") or 0)
+            except Exception:
+                capacite = 0
+            try:
+                annee = int(colv("ANNEE") or 0)
+            except Exception:
+                annee = 0
 
-        return Response(
-            {
-                "message": "Import véhicules terminé",
-                "agence": agence.id,
-                "vehicules_crees": created,
-                "vehicules_mis_a_jour": updated,
-                "lignes_ignorees": ignored,
-                "resume": {
-                    "crees": len(created),
-                    "mis_a_jour": len(updated),
-                    "ignores": len(ignored),
-                    "total_lues": int(df.shape[0]),
-                },
-            },
-            status=200,
-        )
+            if not marque or not modele:
+                ignored.append({"ligne": row_idx, "raison": "MARQUE/MODELE manquant"})
+                continue
+
+            # upsert par immatriculation + agence
+            obj, was_created = Vehicule.objects.get_or_create(
+                immatriculation=immat,
+                defaults={
+                    "type": type_ if type_ in dict(Vehicule.TYPE_CHOICES) else "minibus",
+                    "marque": marque, "model": modele, "capacite": capacite,
+                    "annee": annee or 0, "agence": agence,
+                }
+            )
+            if not was_created:
+                # update si champ utile a changé
+                changed = False
+                if obj.agence_id != agence.id:
+                    # même immat mais attribuée à une autre agence: ignorer/consigner
+                    ignored.append({"ligne": row_idx, "raison": f"Immat déjà utilisée par une autre agence ({obj.agence_id})."})
+                    continue
+                if marque and obj.marque != marque:
+                    obj.marque = marque; changed = True
+                if modele and obj.model != modele:
+                    obj.model = modele; changed = True
+                if type_ and type_ in dict(Vehicule.TYPE_CHOICES) and obj.type != type_:
+                    obj.type = type_; changed = True
+                if capacite and obj.capacite != capacite:
+                    obj.capacite = capacite; changed = True
+                if annee and obj.annee != annee:
+                    obj.annee = annee; changed = True
+                if changed:
+                    obj.save()
+                    updated.append({"id": obj.id, "immatriculation": obj.immatriculation})
+                else:
+                    # ni créé ni modifié → ignoré soft
+                    ignored.append({"ligne": row_idx, "raison": "Aucune modification."})
+            else:
+                created.append({"id": obj.id, "immatriculation": obj.immatriculation})
+
+        return Response({
+            "vehicules_crees": created,
+            "vehicules_mis_a_jour": updated,
+            "lignes_ignorees": ignored,
+        }, status=200)
+
 
 
 # ---------------------------------------------------------------------

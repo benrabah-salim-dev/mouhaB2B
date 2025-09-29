@@ -1,13 +1,12 @@
 // src/RessourcesVehicules.js
 import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import api from "./api"; // <-- utilisation de ton instance avec token
+import api from "./api"; // instance avec baseURL + JWT
 
 export default function RessourcesVehicules() {
   const { agence_id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const API_URL = (process.env.REACT_APP_API_URL || "").replace(/\/+$/, "");
 
   const [vehicules, setVehicules] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -17,6 +16,7 @@ export default function RessourcesVehicules() {
 
   const [recentlyCreated, setRecentlyCreated] = useState(new Set());
   const [recentlyUpdated, setRecentlyUpdated] = useState(new Set());
+  const [deletingId, setDeletingId] = useState(null); // spinner suppression
 
   const prevIdsRef = useRef(new Set());
 
@@ -34,11 +34,11 @@ export default function RessourcesVehicules() {
 
   const getKey = (v) => v?.immatriculation || v?.id;
 
+  // normalise l'URL next de DRF pour notre client `api`
   const followNextUrl = (next) => {
     if (!next) return null;
-    if (next.startsWith("http")) return next;
-    if (next.startsWith("/")) return `${API_URL}${next}`;
-    return `${API_URL}/${next}`;
+    if (next.startsWith("http")) return next; // axios ignorera baseURL
+    return next.replace(/^\/+/, "").replace(/^api\/+/, "");
   };
 
   const fetchVehicules = async () => {
@@ -46,19 +46,18 @@ export default function RessourcesVehicules() {
       setLoading(true);
       setMsg("");
       let all = [];
-      let nextUrl = `/vehicules/?agence=${agence_id}`;
+      // pas de slash initial
+      let nextUrl = `vehicules/?agence=${agence_id}`;
 
       while (nextUrl) {
-        const { data } = await api.get(nextUrl); // ✅ api au lieu de axios
+        const { data } = await api.get(nextUrl);
         all = all.concat(extractRows(data));
         nextUrl = followNextUrl(data?.next || null);
       }
 
       const prevIds = prevIdsRef.current;
       const nowIds = new Set(all.map(getKey).filter(Boolean));
-      const newSinceLastFetch = new Set(
-        [...nowIds].filter((id) => !prevIds.has(id))
-      );
+      const newSinceLastFetch = new Set([...nowIds].filter((id) => !prevIds.has(id)));
 
       if (!importing && newSinceLastFetch.size > 0) {
         setRecentlyCreated((old) => new Set([...old, ...newSinceLastFetch]));
@@ -76,8 +75,9 @@ export default function RessourcesVehicules() {
   };
 
   useEffect(() => {
-    if (API_URL && agence_id) fetchVehicules();
-  }, [agence_id, API_URL]);
+    if (agence_id) fetchVehicules();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agence_id]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -103,9 +103,10 @@ export default function RessourcesVehicules() {
     formData.append("agence", agence_id);
 
     try {
-      const res = await api.post(`/importer-vehicules/`, formData, {
+      // pas de slash initial
+      const res = await api.post(`importer-vehicules/`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
-      }); // ✅ api.post
+      });
 
       const createdArr = res.data?.vehicules_crees || [];
       const updatedArr = res.data?.vehicules_mis_a_jour || [];
@@ -136,6 +137,38 @@ export default function RessourcesVehicules() {
     }
   };
 
+  const handleDeleteVehicule = async (vehiculeId) => {
+    if (!vehiculeId) return;
+    if (!window.confirm("Confirmer la suppression de ce véhicule ?")) return;
+
+    try {
+      setDeletingId(vehiculeId);
+      await api.delete(`vehicules/${vehiculeId}/`); // pas de slash initial
+      setVehicules((prev) => prev.filter((v) => String(v.id) !== String(vehiculeId)));
+      setMsg("Véhicule supprimé.");
+      // nettoie les marqueurs si besoin
+      setRecentlyCreated((prev) => {
+        const next = new Set([...prev]);
+        next.delete(vehiculeId);
+        return next;
+      });
+      setRecentlyUpdated((prev) => {
+        const next = new Set([...prev]);
+        next.delete(vehiculeId);
+        return next;
+      });
+    } catch (e) {
+      console.error(e);
+      const detail =
+        e?.response?.data?.detail ||
+        e?.response?.data?.error ||
+        "Erreur pendant la suppression.";
+      alert(detail);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const clearMarks = () => {
     setRecentlyCreated(new Set());
     setRecentlyUpdated(new Set());
@@ -160,10 +193,7 @@ export default function RessourcesVehicules() {
       <div className="d-flex align-items-center justify-content-between mb-3">
         <h2>Véhicules de l’agence</h2>
         <div className="d-flex gap-2">
-          <button
-            className="btn btn-outline-secondary"
-            onClick={() => navigate(-1)}
-          >
+          <button className="btn btn-outline-secondary" onClick={() => navigate(-1)}>
             ← Retour
           </button>
           <button className="btn btn-outline-dark" onClick={clearMarks}>
@@ -189,9 +219,7 @@ export default function RessourcesVehicules() {
 
       {/* Import */}
       <div className="mb-3">
-        <label className="form-label">
-          Importer un fichier Excel (.xls/.xlsx)
-        </label>
+        <label className="form-label">Importer un fichier Excel (.xls/.xlsx)</label>
         <input
           type="file"
           accept=".xls,.xlsx"
@@ -206,9 +234,7 @@ export default function RessourcesVehicules() {
             <summary>Lignes ignorées ({ignored.length})</summary>
             <ul className="mt-2">
               {ignored.map((l, i) => (
-                <li key={`${l.ligne}-${i}`}>
-                  Ligne {l.ligne}: {l.raison}
-                </li>
+                <li key={`${l.ligne}-${i}`}>Ligne {l.ligne}: {l.raison}</li>
               ))}
             </ul>
           </details>
@@ -239,6 +265,7 @@ export default function RessourcesVehicules() {
                 <th>Immatriculation</th>
                 <th>Disponibilité</th>
                 <th style={{ width: 120 }}>Statut</th>
+                <th className="text-end" style={{ width: 150 }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -263,13 +290,33 @@ export default function RessourcesVehicules() {
                       <span className="badge text-bg-warning ms-1">MAJ</span>
                     )}
                   </td>
+                  <td className="text-end">
+                    <div className="btn-group">
+                      {/* Exemple d’édition si tu as une page d’édition */}
+                      {/* <button
+                        className="btn btn-sm btn-outline-secondary"
+                        onClick={() => navigate(`/agence/${agence_id}/vehicules/${v.id}/edit`)}
+                        title="Modifier"
+                      >
+                        ✏️
+                      </button> */}
+                      <button
+                        className="btn btn-sm btn-outline-danger"
+                        onClick={() => handleDeleteVehicule(v.id)}
+                        disabled={deletingId === v.id}
+                        title="Supprimer"
+                      >
+                        {deletingId === v.id ? "…" : "🗑️"}
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
+
               {vehicules.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="text-center">
-                    Aucun véhicule
-                  </td>
+                  {/* 9 colonnes avec Actions */}
+                  <td colSpan={9} className="text-center">Aucun véhicule</td>
                 </tr>
               )}
             </tbody>

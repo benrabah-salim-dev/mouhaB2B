@@ -1,7 +1,5 @@
-# b2b/serializers.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-
 from typing import List
 
 from django.contrib.auth.models import User
@@ -21,7 +19,7 @@ from .models import (
     FicheMouvement,
     FicheMouvementItem,
     Profile,  # assure-toi qu'il existe bien
-    # Nouveaux modèles "produits"
+    # Produits
     Zone,
     Produit,
     ProduitEtape,
@@ -46,7 +44,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'profile']
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'profile']
 
 
 # ============== Agence / Véhicule / Chauffeur / Hotel ==============
@@ -92,10 +90,9 @@ class HotelSerializer(serializers.ModelSerializer):
 
 # ============== Dossier & liés ==============
 
-# Si ton modèle Touriste existe en M2M via Dossier.touristes, on le déduit dynamiquement
 class TouristeSerializer(serializers.ModelSerializer):
     class Meta:
-        model = getattr(Dossier, "touristes").rel.model  # évite d'importer un modèle qui peut varier
+        model = getattr(Dossier, "touristes").rel.model
         fields = '__all__'
 
 
@@ -103,14 +100,12 @@ class DossierSerializer(serializers.ModelSerializer):
     agence_nom = serializers.CharField(source='agence.nom', read_only=True)
     hotel_nom = serializers.CharField(source='hotel.nom', read_only=True)
 
-    # expose les ID des touristes (clé primaire) — ajuste si tu veux l’embed complet
     touristes = serializers.PrimaryKeyRelatedField(
         many=True,
         queryset=getattr(Dossier, "touristes").rel.model.objects.all(),
         required=False
     )
 
-    # observation exposée côté API
     observation = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
@@ -236,28 +231,44 @@ class FicheMouvementSerializer(serializers.ModelSerializer):
     agence_nom = serializers.CharField(source='agence.nom', read_only=True)
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
 
-    # Permet de passer une liste d’IDs de dossiers lors du create/update
+    # important: rendre 'name' optionnel et tolérer null/blank
+    name = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
+
+    # pour créer les items en une fois
     dossier_ids = serializers.ListField(
-        child=serializers.IntegerField(),
-        write_only=True,
-        required=False
+        child=serializers.IntegerField(), write_only=True, required=False
     )
 
     class Meta:
         model = FicheMouvement
-        fields = [
-            'id', 'agence', 'agence_nom',
-            'name', 'type', 'date', 'aeroport',
-            'created_by', 'created_by_username', 'created_at',
-            'items',
-            'dossier_ids',
-        ]
+        fields = "__all__"
         read_only_fields = ['created_by', 'created_at']
+        extra_kwargs = {
+            "hotel_schedule": {"required": False},
+            "aeroport": {"required": False},
+        }
 
-    def validate_dossier_ids(self, value: List[int]) -> List[int]:
-        if not isinstance(value, list):
-            raise serializers.ValidationError("dossier_ids doit être une liste d'IDs.")
-        return value
+    def validate(self, attrs):
+        fiche_agence = attrs.get("agence") or getattr(self.instance, "agence", None)
+        dossier_ids = self.initial_data.get("dossier_ids", [])
+        if dossier_ids:
+            wrong = list(
+                Dossier.objects.filter(id__in=dossier_ids)
+                .exclude(agence_id=getattr(fiche_agence, "id", None))
+                .values_list("id", flat=True)
+            )
+            if wrong:
+                raise serializers.ValidationError({"dossier_ids": f"Dossiers d'une autre agence: {wrong}"})
+            used = list(
+                FicheMouvementItem.objects.filter(dossier_id__in=dossier_ids)
+                .values_list("dossier_id", flat=True)
+            )
+            if used:
+                raise serializers.ValidationError({"dossier_ids": f"Déjà utilisés par une fiche: {sorted(set(used))}"})
+        # normaliser name (évite “This field may not be null.”)
+        if attrs.get("name") is None:
+            attrs["name"] = ""
+        return attrs
 
     @transaction.atomic
     def create(self, validated_data):
@@ -275,7 +286,6 @@ class FicheMouvementSerializer(serializers.ModelSerializer):
         dossier_ids = validated_data.pop("dossier_ids", None)
         fiche = super().update(instance, validated_data)
         if dossier_ids is not None:
-            # reset items puis recréer
             FicheMouvementItem.objects.filter(fiche=fiche).delete()
             if dossier_ids:
                 dossiers = Dossier.objects.filter(id__in=dossier_ids)
@@ -286,7 +296,7 @@ class FicheMouvementSerializer(serializers.ModelSerializer):
 
 
 # =========================
-# Zones & Produits (Excursions / Navettes)
+# Zones & Produits
 # =========================
 
 class ZoneSerializer(serializers.ModelSerializer):
@@ -358,3 +368,4 @@ class VehicleOfferSerializer(serializers.ModelSerializer):
             "price", "price_per_adult", "price_per_child", "currency",
             "notes", "is_public", "active", "created_at",
         ]
+

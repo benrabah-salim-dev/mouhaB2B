@@ -1,3 +1,4 @@
+// src/components/FicheMouvement/FicheMouvement.js
 import React from "react";
 import "./ficheMouvement.css";
 import { useFicheMouvement } from "./useFicheMouvement";
@@ -6,23 +7,45 @@ import { Link } from "react-router-dom";
 
 export default function FicheMouvement() {
   const vm = useFicheMouvement();
+
+  // ⬇️ Toujours destructurer AVANT d'utiliser les valeurs
   const {
     currentAgenceId, navigate,
     msg, creating, movementName, setMovementName,
     selectedLanguage, setSelectedLanguage, languages, loading,
+
     // filters & options
-    typeSel, setTypeSel, dateSel, setDateSel, airportSel, setAirportSel,
-    flightsSel, setFlightsSel, tosSel, setTosSel, villesSel, setVillesSel, hotelsSel, setHotelsSel,
+    typeSel, setTypeSel,
+    dateSel, setDateSel,
+    airportSel, setAirportSel,
+    flightsSel, setFlightsSel,
+    tosSel, setTosSel,
+    villesSel, setVillesSel,
+    hotelsSel, setHotelsSel,
+
     dateOptions, airportOptions, flightOptions, toOptions, villeOptions, hotelOptions,
+
     // derived
     tCode, selectedCount, selectedPax, obsCount,
+
     // data & selection
     groupedByHotel, selectedDossierIds, setSelectedDossierIds,
+
     // actions
     onFile, clearImport, onCreate,
+
     // utils
     getPaxDisplay, rowKeyOf,
   } = vm;
+
+  // ⬇️ Gating après la destructuration (sinon erreur de portée)
+  const canShowDate     = !!typeSel && dateOptions.length > 0;
+  const canShowAirport  = canShowDate && !!dateSel && airportOptions.length > 0;
+  const canShowFlights  = canShowAirport && !!airportSel && flightOptions.length > 0;
+  const canShowTO       = canShowFlights && flightsSel.length > 0 && toOptions.length > 0;
+  const canShowVilles   = canShowTO && tosSel.length > 0 && villeOptions.length > 0;
+  const canShowHotels   = canShowVilles && (villesSel.length > 0 || hotelOptions.length > 0);
+  const canShowPassengers = !!tCode && !!dateSel && !!airportSel && flightsSel.length > 0;
 
   return (
     <div className="fm-page">
@@ -104,13 +127,23 @@ export default function FicheMouvement() {
             <div className="fm-row chips">
               <Chip
                 active={typeSel === "arrivee"}
-                onClick={() => { setTypeSel("arrivee"); setDateSel(""); setAirportSel(""); setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]); setSelectedDossierIds(new Set()); }}
+                onClick={() => {
+                  setTypeSel("arrivee");
+                  setDateSel(""); setAirportSel("");
+                  setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
+                  setSelectedDossierIds(new Set());
+                }}
               >
                 Arrivées
               </Chip>
               <Chip
                 active={typeSel === "depart"}
-                onClick={() => { setTypeSel("depart"); setDateSel(""); setAirportSel(""); setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]); setSelectedDossierIds(new Set()); }}
+                onClick={() => {
+                  setTypeSel("depart");
+                  setDateSel(""); setAirportSel("");
+                  setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
+                  setSelectedDossierIds(new Set());
+                }}
               >
                 Départs
               </Chip>
@@ -118,145 +151,168 @@ export default function FicheMouvement() {
           </Section>
 
           {/* DATE */}
-          <Section
-            title="Date du vol"
-            disabled={!typeSel || dateOptions.length === 0}
-            right={dateSel ? <span className="fm-badge">{dateSel}</span> : <span className="text-muted small">Choisir…</span>}
-          >
-            <select
-              className="form-select"
-              value={dateSel}
-              onChange={(e) => { setDateSel(e.target.value); setAirportSel(""); setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]); setSelectedDossierIds(new Set()); }}
-              disabled={!typeSel || !dateOptions.length}
+          {canShowDate && (
+            <Section
+              title="Date du vol"
+              right={dateSel ? <span className="fm-badge">{dateSel}</span> : <span className="text-muted small">Choisir…</span>}
             >
-              <option value="">— Sélectionner une date —</option>
-              {dateOptions.map((d) => <option key={d} value={d}>{d}</option>)}
-            </select>
-          </Section>
+              <select
+                className="form-select"
+                value={dateSel}
+                onChange={(e) => {
+                  setDateSel(e.target.value);
+                  setAirportSel(""); setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
+                  setSelectedDossierIds(new Set());
+                }}
+              >
+                <option value="">— Sélectionner une date —</option>
+                {dateOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </Section>
+          )}
 
           {/* AÉROPORT */}
-          <Section
-            title={typeSel === "depart" ? "Aéroport de départ" : "Aéroport d’arrivée"}
-            disabled={!dateSel || airportOptions.length === 0}
-          >
-            <div className="fm-row chips-wrap">
-              {airportSel && airportOptions.length === 0 && <div className="text-muted small">Aucun aéroport.</div>}
-              {airportOptions.map((a) => {
-                const act = airportSel === a;
-                return (
-                  <Chip
-                    key={a}
-                    active={act}
-                    onClick={() => {
-                      const next = act ? "" : a;
-                      setAirportSel(next);
-                      setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]); setSelectedDossierIds(new Set());
-                    }}
-                    title={a}
-                  >
-                    <strong>{a}</strong>
-                  </Chip>
-                );
-              })}
-            </div>
-          </Section>
+          {canShowAirport && (
+            <Section title={typeSel === "depart" ? "Aéroport de départ" : "Aéroport d’arrivée"}>
+              <div className="fm-row chips-wrap">
+                {airportOptions.map((a) => {
+                  const act = airportSel === a;
+                  return (
+                    <Chip
+                      key={a}
+                      active={act}
+                      onClick={() => {
+                        const next = act ? "" : a;
+                        setAirportSel(next);
+                        setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
+                        setSelectedDossierIds(new Set());
+                      }}
+                      title={a}
+                    >
+                      <strong>{a}</strong>
+                    </Chip>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
 
           {/* VOLS */}
-          <Section title="Vols" disabled={!airportSel || vm.flightOptions.length === 0}>
-            <div className="fm-row chips-wrap">
-              {airportSel && vm.flightOptions.length === 0 && <div className="text-muted small">Aucun vol trouvé.</div>}
-              {vm.flightOptions.map((f) => {
-                const act = flightsSel.includes(f.flight);
-                const times = f.times.join(" / ");
-                return (
-                  <Chip
-                    key={f.flight}
-                    active={act}
-                    onClick={() => { setFlightsSel((prev) => prev.includes(f.flight) ? prev.filter((x) => x !== f.flight) : [...prev, f.flight]); setSelectedDossierIds(new Set()); }}
-                    title={`${f.count} dossiers • ${f.pax} pax`}
-                  >
-                    <strong>{f.flight}</strong>
-                    {times ? <span className="fm-chip-sub">{times}</span> : null}
-                    <span className="fm-chip-pill">{f.pax} pax</span>
-                  </Chip>
-                );
-              })}
-            </div>
-          </Section>
+          {canShowFlights && (
+            <Section title="Vols">
+              <div className="fm-row chips-wrap">
+                {flightOptions.map((f) => {
+                  const act = flightsSel.includes(f.flight);
+                  const times = f.times.join(" / ");
+                  return (
+                    <Chip
+                      key={f.flight}
+                      active={act}
+                      onClick={() => {
+                        setFlightsSel((prev) =>
+                          prev.includes(f.flight) ? prev.filter((x) => x !== f.flight) : [...prev, f.flight]
+                        );
+                        setSelectedDossierIds(new Set());
+                      }}
+                      title={`${f.count} dossiers • ${f.pax} pax`}
+                    >
+                      <strong>{f.flight}</strong>
+                      {times ? <span className="fm-chip-sub">{times}</span> : null}
+                      <span className="fm-chip-pill">{f.pax} pax</span>
+                    </Chip>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
 
           {/* TO */}
-          <Section title="Tour opérateur" disabled={flightsSel.length === 0 || vm.toOptions.length === 0}>
-            <div className="fm-row chips-wrap">
-              {flightsSel.length === 0 && <div className="text-muted small">Choisissez d’abord un vol.</div>}
-              {flightsSel.length > 0 && vm.toOptions.length === 0 && <div className="text-muted small">Aucun T.O. pour ces vols.</div>}
-              {vm.toOptions.map((t) => {
-                const act = tosSel.includes(t.to);
-                return (
-                  <Chip
-                    key={t.to}
-                    active={act}
-                    onClick={() => { setTosSel((prev) => prev.includes(t.to) ? prev.filter((x) => x !== t.to) : [...prev, t.to]); setSelectedDossierIds(new Set()); }}
-                    title={`${t.count} dossiers • ${t.pax} pax`}
-                  >
-                    <strong>{t.to}</strong>
-                    <span className="fm-chip-pill">{t.pax} pax</span>
-                  </Chip>
-                );
-              })}
-            </div>
-          </Section>
+          {canShowTO && (
+            <Section title="Tour opérateur">
+              <div className="fm-row chips-wrap">
+                {toOptions.map((t) => {
+                  const act = tosSel.includes(t.to);
+                  return (
+                    <Chip
+                      key={t.to}
+                      active={act}
+                      onClick={() => {
+                        setTosSel((prev) =>
+                          prev.includes(t.to) ? prev.filter((x) => x !== t.to) : [...prev, t.to]
+                        );
+                        setSelectedDossierIds(new Set());
+                      }}
+                      title={`${t.count} dossiers • ${t.pax} pax`}
+                    >
+                      <strong>{t.to}</strong>
+                      <span className="fm-chip-pill">{t.pax} pax</span>
+                    </Chip>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
 
           {/* ZONES */}
-          <Section title="Zones (villes)" disabled={tosSel.length === 0 || vm.villeOptions.length === 0}>
-            {tosSel.length === 0 && <div className="text-muted small">Sélectionnez d’abord un T.O.</div>}
-            <div className="fm-row chips-wrap">
-              {vm.villeOptions.map((v) => {
-                const act = villesSel.includes(v.ville);
-                return (
-                  <Chip
-                    key={v.ville}
-                    active={act}
-                    onClick={() => {
-                      setVillesSel((prev) => prev.includes(v.ville) ? prev.filter((x) => x !== v.ville) : [...prev, v.ville]);
-                      setSelectedDossierIds(new Set());
-                    }}
-                    title={`${v.count} dossiers • ${v.pax} pax`}
-                  >
-                    <strong>{v.ville}</strong>
-                    <span className="fm-chip-pill">{v.pax} pax</span>
-                  </Chip>
-                );
-              })}
-            </div>
-          </Section>
+          {canShowVilles && (
+            <Section title="Zones (villes)">
+              <div className="fm-row chips-wrap">
+                {villeOptions.map((v) => {
+                  const act = villesSel.includes(v.ville);
+                  return (
+                    <Chip
+                      key={v.ville}
+                      active={act}
+                      onClick={() => {
+                        setVillesSel((prev) =>
+                          prev.includes(v.ville) ? prev.filter((x) => x !== v.ville) : [...prev, v.ville]
+                        );
+                        setSelectedDossierIds(new Set());
+                      }}
+                      title={`${v.count} dossiers • ${v.pax} pax`}
+                    >
+                      <strong>{v.ville}</strong>
+                      <span className="fm-chip-pill">{v.pax} pax</span>
+                    </Chip>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
 
           {/* HÔTELS */}
-          <Section title="Hôtels" disabled={vm.villeOptions.length === 0 || (villesSel.length === 0 && vm.hotelOptions.length === 0)}>
-            {villesSel.length === 0 && <div className="text-muted small">Sélectionnez d’abord au moins une zone.</div>}
-            <div className="fm-row chips-wrap">
-              {vm.hotelOptions.map((h) => {
-                const act = hotelsSel.includes(h.hotel);
-                return (
-                  <Chip
-                    key={h.hotel}
-                    active={act}
-                    onClick={() => { setHotelsSel((prev) => prev.includes(h.hotel) ? prev.filter((x) => x !== h.hotel) : [...prev, h.hotel]); setSelectedDossierIds(new Set()); }}
-                    title={`${h.count} dossiers • ${h.pax} pax`}
-                  >
-                    <strong>{h.hotel}</strong>
-                    <span className="fm-chip-pill">{h.pax} pax</span>
-                  </Chip>
-                );
-              })}
-            </div>
-          </Section>
+          {canShowHotels && (
+            <Section title="Hôtels">
+              <div className="fm-row chips-wrap">
+                {hotelOptions.map((h) => {
+                  const act = hotelsSel.includes(h.hotel);
+                  return (
+                    <Chip
+                      key={h.hotel}
+                      active={act}
+                      onClick={() => {
+                        setHotelsSel((prev) =>
+                          prev.includes(h.hotel) ? prev.filter((x) => x !== h.hotel) : [...prev, h.hotel]
+                        );
+                        setSelectedDossierIds(new Set());
+                      }}
+                      title={`${h.count} dossiers • ${h.pax} pax`}
+                    >
+                      <strong>{h.hotel}</strong>
+                      <span className="fm-chip-pill">{h.pax} pax</span>
+                    </Chip>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
 
           {/* PAX PAR HÔTEL */}
-          {!!groupedByHotel.length && (
-            <Section
-              title="Pax par hôtel (sélection)"
-              right={<span className="text-muted small">Coche/décoche pour inclure dans la fiche</span>}
-            >
+          {canShowPassengers && groupedByHotel.length > 0 && (
+  <Section
+    title="Pax par hôtel (sélection)"
+    right={<span className="text-muted small">Coche/décoche pour inclure dans la fiche</span>}
+  >
               <div className="fm-hotels-list">
                 {groupedByHotel.map(([hotel, list]) => (
                   <div key={hotel} className="fm-hotel-block">
@@ -279,8 +335,7 @@ export default function FicheMouvement() {
                               onChange={() => {
                                 setSelectedDossierIds((prev) => {
                                   const next = new Set(prev);
-                                  if (next.has(r.id)) next.delete(r.id);
-                                  else next.add(r.id);
+                                  if (next.has(r.id)) next.delete(r.id); else next.add(r.id);
                                   return next;
                                 });
                               }}

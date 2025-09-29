@@ -7,6 +7,11 @@ import { AuthContext } from "../context/AuthContext";
 /* =========================================================
    Helpers
 ========================================================= */
+
+const getPaxDisplay = (d, t) => `${getPaxForType(d, t)} pax`;
+
+const rowKeyOf = (r, i) => String(r?.id ?? r?.reference ?? `row_${i}`);
+
 const safeDate = (v) => { try { const d = new Date(v); return isNaN(d.getTime()) ? null : d; } catch { return null; } };
 const normalizeDA = (val) => {
   if (!val) return null;
@@ -52,10 +57,8 @@ const getFlightNo = (d, t) => {
 };
 const getFlightTime = (d, t) => (t === "A" ? d.heure_arrivee || "" : t === "D" ? d.heure_depart || "" : d.heure_arrivee || d.heure_depart || "");
 const getPaxForType = (d, t) => (t === "A" ? Number(d.nombre_personnes_arrivee || 0) : t === "D" ? Number(d.nombre_personnes_retour || 0) : Number(d.nombre_personnes_arrivee || 0) + Number(d.nombre_personnes_retour || 0));
-const getPaxDisplay = (d, t) => `${getPaxForType(d, t)} pax`;
 const formatRefFromDateKey = (dateKey) => (dateKey ? `M_${dateKey}` : null);
 const normalizeRows = (rows) => rows.map((d) => ({ ...d, _type: deriveType(d), _to: d?._to ?? pickTO(d), _ref_to: d?._ref_to ?? pickRefTO(d) }));
-const rowKeyOf = (r, i) => String(r?.id ?? r?.reference ?? `row_${i}`);
 
 // Heuristique affichage noms pax
 const getPassengerLabel = (row, t) => {
@@ -105,17 +108,15 @@ function Chip({ active, children, onClick, title }) {
     </button>
   );
 }
-
 function TopSummaryBar({
   tCode, dateSel, airportSel, flightsSel, tosSel, villesSel, hotelsSel,
-  selectedCount, selectedPax, movementName, setMovementName, onCreate, creating,
-  obsCount = 0
+  selectedCount, selectedPax, movementName, setMovementName, onCreate, creating
 }) {
   const joinFull = (arr=[]) => arr.map(s => String(s||"").trim()).filter(Boolean);
   const titleJoin = (arr) => joinFull(arr).join(", ");
 
-  const KV = ({ label, value, title, danger }) => (
-    <div className={`kv ${danger ? "kv-danger" : ""}`}>
+  const KV = ({ label, value, title }) => (
+    <div className="kv">
       <div className="kv-label">{label}</div>
       <div className="kv-value" title={title}>{value || "—"}</div>
     </div>
@@ -128,15 +129,25 @@ function TopSummaryBar({
         <KV label="Date" value={dateSel} />
         <KV label="Aéroport" value={airportSel} />
 
-        <KV label="Vols" value={joinFull(flightsSel).join(" · ")} title={titleJoin(flightsSel)} />
-        <KV label="TO" value={joinFull(tosSel).join(" · ")} title={titleJoin(tosSel)} />
-        <KV label="Zones" value={joinFull(villesSel).join(" · ")} title={titleJoin(villesSel)} />
-        <KV label="Hôtels" value={joinFull(hotelsSel).join(" · ")} title={titleJoin(hotelsSel)} />
-
         <KV
-          label="Observations"
-          value={obsCount > 0 ? `⚠️ ${obsCount}` : "Sans obs"}
-          danger={obsCount > 0}
+          label="Vols"
+          value={joinFull(flightsSel).join(" · ")}
+          title={titleJoin(flightsSel)}
+        />
+        <KV
+          label="TO"
+          value={joinFull(tosSel).join(" · ")}
+          title={titleJoin(tosSel)}
+        />
+        <KV
+          label="Zones"
+          value={joinFull(villesSel).join(" · ")}
+          title={titleJoin(villesSel)}
+        />
+        <KV
+          label="Hôtels"
+          value={joinFull(hotelsSel).join(" · ")}
+          title={titleJoin(hotelsSel)}
         />
 
         <div className="kv kpi">
@@ -171,6 +182,7 @@ function TopSummaryBar({
   );
 }
 
+
 /* =========================================================
    Page
 ========================================================= */
@@ -182,7 +194,6 @@ export default function FicheMouvement() {
   const user = ctxUser || localUser;
   const currentAgenceId = params.agence_id || user?.agence_id || "";
   const LS_KEY = currentAgenceId ? `dossiersImportes:${currentAgenceId}` : "dossiersImportes";
-  const FILTERS_KEY = currentAgenceId ? `ficheMvtFilters:${currentAgenceId}` : "ficheMvtFilters";
 
   // Données importées
   const [rows, setRows] = useState([]);
@@ -197,17 +208,18 @@ export default function FicheMouvement() {
   const [hotelsSel, setHotelsSel] = useState([]); // multi
 
   // Sélection fine des dossiers (pax)
+  
   const [selectedDossierIds, setSelectedDossierIds] = useState(() => new Set());
 
-  // Observations ouvertes (par dossier)
-  const [openObs, setOpenObs] = useState(() => new Set());
-  const toggleObs = (key) => {
-    setOpenObs((prev) => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
-  };
+const [openObs, setOpenObs] = useState(() => new Set());
+const toggleObs = (key) => {
+  setOpenObs(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
+};
+
 
   // UI
   const [msg, setMsg] = useState("");
@@ -249,43 +261,16 @@ export default function FicheMouvement() {
     }
   }, [LS_KEY, currentAgenceId]);
 
-  /* Hydrate filtres sauvegardés */
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(FILTERS_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      if (!saved) return;
-      if (saved.typeSel) setTypeSel(saved.typeSel);
-      if (saved.dateSel) setDateSel(saved.dateSel);
-      if (saved.airportSel) setAirportSel(saved.airportSel);
-      if (Array.isArray(saved.flightsSel)) setFlightsSel(saved.flightsSel);
-      if (Array.isArray(saved.tosSel)) setTosSel(saved.tosSel);
-      if (Array.isArray(saved.villesSel)) setVillesSel(saved.villesSel);
-      if (Array.isArray(saved.hotelsSel)) setHotelsSel(saved.hotelsSel);
-      if (typeof saved.movementName === "string") setMovementName(saved.movementName);
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [FILTERS_KEY]);
-
-  /* Sauvegarde filtres */
-  useEffect(() => {
-    const payload = { typeSel, dateSel, airportSel, flightsSel, tosSel, villesSel, hotelsSel, movementName };
-    try { localStorage.setItem(FILTERS_KEY, JSON.stringify(payload)); } catch {}
-  }, [typeSel, dateSel, airportSel, flightsSel, tosSel, villesSel, hotelsSel, movementName, FILTERS_KEY]);
-
   /* Import fichier */
   const onFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true); setMsg("");
 
-    // reset filtres & sélection
+    // reset
     setTypeSel(null); setDateSel(""); setAirportSel("");
     setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
     setSelectedDossierIds(new Set());
-    setOpenObs(new Set());
-    try { localStorage.removeItem(FILTERS_KEY); } catch {}
 
     const formData = new FormData();
     formData.append("file", file);
@@ -311,12 +296,10 @@ export default function FicheMouvement() {
 
   const clearImport = () => {
     localStorage.removeItem(LS_KEY);
-    localStorage.removeItem(FILTERS_KEY);
     setRows([]);
     setTypeSel(null); setDateSel(""); setAirportSel("");
     setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
     setSelectedDossierIds(new Set());
-    setOpenObs(new Set());
     setMsg("Import local vidé.");
   };
 
@@ -489,19 +472,11 @@ export default function FicheMouvement() {
     return Array.from(map.entries()).sort((a,b)=>b[1].length - a[1].length);
   }, [filteredRecords]);
 
-  // KPIs sélection + obs
+  // KPIs sélection
   const selectedCount = Array.from(selectedDossierIds).length;
   const selectedPax = useMemo(
     () => filteredRecords.filter((r) => selectedDossierIds.has(r.id)).reduce((acc, r) => acc + getPaxForType(r, tCode), 0),
     [filteredRecords, selectedDossierIds, tCode]
-  );
-  const selectedRows = useMemo(
-    () => filteredRecords.filter((r) => selectedDossierIds.has(r.id)),
-    [filteredRecords, selectedDossierIds]
-  );
-  const obsCount = useMemo(
-    () => selectedRows.reduce((acc, r) => acc + (r.observation && String(r.observation).trim() ? 1 : 0), 0),
-    [selectedRows]
   );
 
   /* Création */
@@ -511,33 +486,22 @@ export default function FicheMouvement() {
     if (!tCode || !dateSel || !airportSel) { setMsg("Complétez Type, Date et Aéroport."); return; }
     if (selectedCount === 0) { setMsg("Aucun dossier sélectionné."); return; }
 
-    const selRows = filteredRecords.filter((r) => selectedDossierIds.has(r.id));
+    const selectedRows = filteredRecords.filter((r) => selectedDossierIds.has(r.id));
     const payload = {
       agence: currentAgenceId,
       name: movementName || null,
       type: tCode,
       date: dateSel,
       aeroport: airportSel,
-      dossier_ids: selRows.map((r) => r.id).filter(Boolean),
+      dossier_ids: selectedRows.map((r) => r.id).filter(Boolean),
       reference: formatRefFromDateKey(dateSel),
-      tour_operateurs: Array.from(new Set(selRows.map((r) => r._to).filter(Boolean))),
-      villes: Array.from(new Set(selRows.map((r) => (r.ville || "").trim() || "—").filter(Boolean))),
+      tour_operateurs: Array.from(new Set(selectedRows.map((r) => r._to).filter(Boolean))),
+      villes: Array.from(new Set(selectedRows.map((r) => (r.ville || "").trim() || "—").filter(Boolean))),
     };
 
     try {
       setCreating(true);
       await api.post("creer-fiche-mouvement/", payload);
-
-      // Retirer les dossiers créés de l'import (state + localStorage)
-      const createdIds = new Set(selRows.map((r) => r.id).filter(Boolean));
-      const remaining = rows.filter((r) => !createdIds.has(r.id));
-      setRows(remaining);
-      localStorage.setItem(LS_KEY, JSON.stringify(remaining));
-
-      // Feedback
-      setMsg(`Fiche créée : ${selRows.length} dossier(s) retiré(s). Restant dans l'import : ${remaining.length}.`);
-
-      // Navigation (garde les filtres grâce à FILTERS_KEY)
       navigate(`/agence/${currentAgenceId}/fiches-mouvement`, { replace: true });
     } catch (err) {
       const status = err?.response?.status; const data = err?.response?.data || {};
@@ -548,11 +512,6 @@ export default function FicheMouvement() {
         if (newRef && newRef.trim()) {
           try {
             await api.post("creer-fiche-mouvement/", { ...payload, reference: newRef.trim() });
-            // même traitement retrait
-            const createdIds = new Set(selRows.map((r) => r.id).filter(Boolean));
-            const remaining = rows.filter((r) => !createdIds.has(r.id));
-            setRows(remaining);
-            localStorage.setItem(LS_KEY, JSON.stringify(remaining));
             navigate(`/agence/${currentAgenceId}/fiches-mouvement`, { replace: true });
             return;
           } catch (e2) {
@@ -577,7 +536,7 @@ export default function FicheMouvement() {
       <div className="fm-wrap">
         <header className="fm-top sticky">
           <div className="fm-top-left">
-            <h2>Fiche de mouvement</h2>
+            <h2>Fiche de mouvement backup</h2>
             {msg ? <div className="fm-msg">{msg}</div> : null}
           </div>
 
@@ -643,7 +602,6 @@ export default function FicheMouvement() {
           setMovementName={setMovementName}
           onCreate={onCreate}
           creating={creating}
-          obsCount={obsCount}
         />
 
         <div className="fm-body onecol">
@@ -754,7 +712,7 @@ export default function FicheMouvement() {
             </div>
           </Section>
 
-          {/* ZONES */}
+          {/* ZONES en chips (multi), sans noms d’hôtels dans le libellé */}
           <Section title="Zones (villes)" disabled={tosSel.length === 0 || villeOptions.length === 0}>
             {tosSel.length === 0 && <div className="text-muted small">Sélectionnez d’abord un T.O.</div>}
             <div className="fm-row chips-wrap">
@@ -778,7 +736,7 @@ export default function FicheMouvement() {
             </div>
           </Section>
 
-          {/* HÔTELS */}
+          {/* HÔTELS (multi) */}
           <Section title="Hôtels" disabled={villeOptions.length === 0 || (villesSel.length === 0 && hotelOptions.length === 0)}>
             {villesSel.length === 0 && <div className="text-muted small">Sélectionnez d’abord au moins une zone.</div>}
             <div className="fm-row chips-wrap">
@@ -813,14 +771,10 @@ export default function FicheMouvement() {
                       <span className="fm-chip-pill">{list.length} ligne(s)</span>
                     </div>
                     <div className="fm-hotel-body">
-                      {list.map((r, i) => {
+                      {list.map((r,i) => {
                         const checked = selectedDossierIds.has(r.id);
-                        const hasObs = !!(r.observation && String(r.observation).trim());
-                        const k = rowKeyOf(r, i);
-                        const isOpen = openObs.has(k);
-
                         return (
-                          <label key={r.id || `${k}`} className={`fm-passenger ${checked ? "is-checked" : ""}`}>
+                          <label key={r.id || Math.random()} className={`fm-passenger ${checked ? "is-checked" : ""}`}>
                             <input
                               type="checkbox"
                               className="form-check-input"
@@ -835,32 +789,49 @@ export default function FicheMouvement() {
                               }}
                             />
                             <div className="fm-passenger-main">
-                              <div className="fm-passenger-name fm-passenger-name--resa">
-                                <span className="fm-resa-name">
-                                  {(r.nom_reservation || "").trim() || "—"}
-                                </span>
-                                <span className="fm-resa-pax">{getPaxDisplay(r, tCode)}</span>
+<div className="fm-passenger-main">
+  <div className="fm-passenger-name fm-passenger-name--resa">
+    {/* Nom de réservation + nb pax */}
+    <span className="fm-resa-name">
+      {(r.nom_reservation || "").trim() || "—"}
+    </span>
+    <span className="fm-resa-pax">{getPaxDisplay(r, tCode)}</span>
 
-                                {hasObs ? (
-                                  <button
-                                    type="button"
-                                    className={`fm-resa-caret ${isOpen ? "is-open" : ""}`}
-                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleObs(k); }}
-                                    aria-expanded={isOpen}
-                                    aria-label={isOpen ? "Masquer l'observation" : "Afficher l'observation"}
-                                    title={isOpen ? "Masquer l'observation" : "Afficher l'observation"}
-                                  >
-                                    <span className="warn-icon" aria-hidden="true">⚠️</span>
-                                  </button>
-                                ) : null}
-                              </div>
+    {/* Triangle si observation */}
+    { (r.observation && String(r.observation).trim()) ? (() => {
+      const k = rowKeyOf(r, i);
+      const isOpen = openObs.has(k);
+      return (
+        <button
+  type="button"
+  className={`fm-resa-caret ${isOpen ? "is-open" : ""}`}
+  onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleObs(k); }}
+  aria-expanded={isOpen}
+  aria-label={isOpen ? "Masquer l'observation" : "Afficher l'observation"}
+  title={isOpen ? "Masquer l'observation" : "Afficher l'observation"}
+>
+  <span className="warn-icon" aria-hidden="true">⚠️</span>
+</button>
 
-                              {hasObs && isOpen ? (
-                                <div className="fm-obs-panel">
-                                  {String(r.observation).trim()}
-                                </div>
-                              ) : null}
-                            </div>
+      );
+    })() : null }
+  </div>
+
+  {/* Panneau repliable */}
+  { (r.observation && String(r.observation).trim()) ? (() => {
+    const k = rowKeyOf(r, i);
+    const isOpen = openObs.has(k);
+    return isOpen ? (
+      <div className="fm-obs-panel">
+        {String(r.observation).trim()}
+      </div>
+    ) : null;
+  })() : null }
+</div>
+
+</div>
+
+                           
                           </label>
                         );
                       })}
@@ -875,6 +846,23 @@ export default function FicheMouvement() {
 
       {/* Styles */}
       <style>{`
+        /* Page centrée et largeur contenue */
+
+        .fm-passenger-name--resa{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+}
+.fm-resa-name{ font-weight:700; }
+.fm-resa-pax{
+  font-size:12px; font-weight:700;
+  background:#f1f5f9; border-radius:999px; padding:2px 6px;
+}
+.fm-resa-warning{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:20px; height:20px; border-radius:999px;
+  background:#FEF3C7; border:1px solid #FCD34D;
+  cursor:help; line-height:1;
+}
+
         .fm-page{ background:#f1f5f9; min-height:100vh; }
         .fm-wrap{ max-width:1120px; margin:0 auto; display:flex; flex-direction:column; background:transparent; }
 
@@ -886,46 +874,64 @@ export default function FicheMouvement() {
         .fm-actions{ display:flex; align-items:center; gap:8px; }
         .fm-sep{ width:1px; height:20px; background:#e5e7eb; margin:0 4px; }
 
-        /* Résumé haut – version lisible */
-        .fm-top-summary.improved{
-          position: sticky; top: 56px; z-index: 4;
-          background: #ffffff; border-bottom: 1px solid #e5e7eb;
-          padding: 10px 16px; display: grid; grid-template-columns: 1fr auto; gap: 12px;
-        }
-        .fm-top-summary-grid{
-          display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px;
-        }
-        .kv{
-          background: #f8fafc;
-          border: 1px solid #e5e7eb;
-          border-radius: 10px;
-          padding: 8px 10px;
-          min-height: 60px;
-          display: flex; flex-direction: column; justify-content: center;
-        }
-        .kv-label{
-          font-size: 11px; letter-spacing: .02em; text-transform: uppercase;
-          color: #64748b; margin-bottom: 2px;
-        }
-        .kv-value{
-          font-size: 14px; font-weight: 700; color: #0f172a; line-height: 1.25;
-          word-break: break-word; white-space: normal;
-        }
-        .kv.kpi{
-          display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
-          background: #f1f5f9;
-        }
-        .kv-danger{ background:#fff7ed; border-color:#fdba74; }
+        ./* Résumé haut – version lisible */
+.fm-top-summary.improved{
+  position: sticky; top: 56px; z-index: 4;
+  background: #ffffff; border-bottom: 1px solid #e5e7eb;
+  padding: 10px 16px; display: grid; grid-template-columns: 1fr auto; gap: 12px;
+}
 
-        .kpi-pair{ text-align: center; }
-        .kpi-num{ font-size: 20px; font-weight: 800; }
-        .kpi-label{ font-size: 11px; color:#64748b; margin-top: 2px; }
-        .kpi-sep{ width: 1px; height: 32px; background: #e5e7eb; }
-        .fm-top-summary-actions{ display:flex; align-items:center; gap:8px; }
+.fm-top-summary-grid{
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0,1fr));
+  gap: 8px;
+}
 
-        @media (max-width:1100px){ .fm-top-summary-grid{ grid-template-columns: repeat(3, minmax(0,1fr)); } }
-        @media (max-width:820px){ .fm-top-summary{ grid-template-columns: 1fr; } .fm-top-summary-grid{ grid-template-columns: repeat(2, minmax(0,1fr)); } }
-        @media (max-width:560px){ .fm-top-summary-grid{ grid-template-columns: 1fr; } }
+/* Carte label/valeur */
+.kv{
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 8px 10px;
+  min-height: 60px;
+  display: flex; flex-direction: column; justify-content: center;
+}
+.kv-label{
+  font-size: 11px; letter-spacing: .02em; text-transform: uppercase;
+  color: #64748b; margin-bottom: 2px;
+}
+.kv-value{
+  font-size: 14px; font-weight: 700; color: #0f172a; line-height: 1.25;
+  word-break: break-word; white-space: normal; /* wrap propre pour longues valeurs */
+}
+
+/* KPI double bloc */
+.kv.kpi{
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  background: #f1f5f9;
+}
+.kpi-pair{ text-align: center; }
+.kpi-num{ font-size: 20px; font-weight: 800; }
+.kpi-label{ font-size: 11px; color: #64748b; margin-top: 2px; }
+.kpi-sep{ width: 1px; height: 32px; background: #e5e7eb; }
+
+/* Actions à droite */
+.fm-top-summary-actions{
+  display: flex; align-items: center; gap: 8px;
+}
+
+/* Responsive */
+@media (max-width: 1100px){
+  .fm-top-summary-grid{ grid-template-columns: repeat(3, minmax(0,1fr)); }
+}
+@media (max-width: 820px){
+  .fm-top-summary{ grid-template-columns: 1fr; }
+  .fm-top-summary-grid{ grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+@media (max-width: 560px){
+  .fm-top-summary-grid{ grid-template-columns: 1fr; }
+}
+
 
         .fm-body.onecol{ display:flex; flex-direction:column; gap:12px; padding:12px 16px; }
 
@@ -937,7 +943,9 @@ export default function FicheMouvement() {
         .fm-sec.is-disabled{ opacity:.6; }
         .fm-sec-mask{ position:absolute; inset:0; border-radius:12px; background:transparent; pointer-events:auto; }
 
-        .fm-row.chips, .fm-row.chips-wrap{ display:flex; gap:8px; flex-wrap:wrap; }
+        .fm-row.chips{ display:flex; gap:8px; flex-wrap:wrap; }
+        .fm-row.chips-wrap{ display:flex; gap:8px; flex-wrap:wrap; }
+
         .fm-chip{ border:1px solid #cbd5e1; background:#fff; border-radius:999px; padding:8px 12px; font-size:13px; font-weight:600; color:#0f172a; display:inline-flex; align-items:center; gap:8px; }
         .fm-chip:hover{ background:#f8fafc; }
         .fm-chip.is-active{ background:#0ea5e9; color:#fff; border-color:#0284c7; }
@@ -952,24 +960,13 @@ export default function FicheMouvement() {
         .fm-passenger{ display:flex; gap:10px; padding:8px 10px; border-top:1px dashed #eef2f7; align-items:flex-start; }
         .fm-passenger:first-of-type{ border-top:none; }
         .fm-passenger.is-checked{ background:#fbfffe; }
-        .fm-passenger-main{ display:flex; flex-direction:column; width:100%; gap:8px; }
+        .fm-passenger-main{ display:flex; justify-content:space-between; width:100%; gap:8px; }
         .fm-passenger-name{ font-size:13px; font-weight:600; }
-
-        /* Ligne resa (nom + pax + bouton obs) */
-        .fm-passenger-name--resa{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-        .fm-resa-name{ font-weight:700; }
-        .fm-resa-pax{ font-size:12px; font-weight:700; background:#f1f5f9; border-radius:999px; padding:2px 6px; }
-
-        .fm-resa-caret{
-          display:inline-flex; align-items:center; justify-content:center;
-          width:22px; height:22px; border-radius:6px; border:1px solid #F59E0B;
-          background:#FFFBEB; cursor:pointer; padding:0;
-        }
-        .fm-resa-caret:hover{ background:#FEF3C7; }
-        .warn-icon{ font-size:14px; line-height:1; }
-        .fm-obs-panel{
-          background:#FFFBEB; border:1px dashed #F59E0B; border-radius:8px;
-          padding:8px 10px; color:#7C2D12; font-size:12px; white-space:pre-wrap;
+        .fm-passenger-meta{ display:flex; gap:6px; flex-wrap:wrap; }
+        
+        @media (max-width: 860px){
+          .fm-top-summary-left{ max-width:100%; }
+          .fm-top-summary .pill .truncate{ max-width:160px; }
         }
       `}</style>
     </div>

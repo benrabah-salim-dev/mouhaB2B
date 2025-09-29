@@ -1,26 +1,21 @@
 // src/api.js
 import axios from "axios";
 
-/** Construit une base stable depuis .env (prend BASE ou URL), et ajoute /api si absent */
+/** Construit une base stable depuis .env (prend BASE/URL), et ajoute /api si absent. */
 function buildApiBase() {
-  let base =
-     process.env.REACT_APP_API_URL ;
-  base = base.replace(/\/+$/, ""); // pas de slash final
-  // Si /api n'est pas présent à la fin, on l'ajoute
+  let base = (process.env.REACT_APP_API_URL || "").trim(); // ← safe quand non défini
+  base = base.replace(/\/+$/, ""); // retire les slashs finaux
+  if (!base) return "/api";        // fallback proxy CRA: /api
   if (!/\/api($|\/)/.test(base)) base = base + "/api";
   return base;
 }
 
 export const API_BASE = buildApiBase();
 
-/** Endpoints d'auth par défaut (DRF SimpleJWT) */
-const DEFAULT_LOGIN_ENDPOINT = "token/";         // /api/token/ (username+password)
+/** Endpoints d'auth (DRF SimpleJWT) */
+const DEFAULT_LOGIN_ENDPOINT = "token/";         // /api/token/
 const DEFAULT_REFRESH_ENDPOINT = "token/refresh/";
-
-/** Route SPA de login (pour redirection client) */
 const LOGIN_ROUTE = process.env.REACT_APP_LOGIN_ROUTE || "/login";
-
-/** Timeout réseau */
 const DEFAULT_TIMEOUT_MS = 30000;
 
 /* ----------------------- Storage (localStorage + fallback mémoire) ----------------------- */
@@ -37,27 +32,51 @@ const storage = {
   },
 };
 
-export const getTokens = () => ({
-  access: storage.get("access"),
-  refresh: storage.get("refresh"),
-});
+/* ------------- Compat tokens: lit d’abord access/refresh, sinon userData.* -------------- */
+export const getTokens = () => {
+  const access = storage.get("access");
+  const refresh = storage.get("refresh");
+  if (access || refresh) return { access, refresh };
+
+  const udRaw = storage.get("userData");
+  if (udRaw) {
+    try {
+      const ud = JSON.parse(udRaw);
+      return { access: ud.token || null, refresh: ud.refresh_token || null };
+    } catch {}
+  }
+  return { access: null, refresh: null };
+};
 
 export const setTokens = ({ access, refresh }) => {
   if (access) storage.set("access", access);
   if (refresh) storage.set("refresh", refresh);
+
+  // Mets aussi à jour userData si présent (compat avec AuthContext actuel)
+  const udRaw = storage.get("userData");
+  if (udRaw) {
+    try {
+      const ud = JSON.parse(udRaw) || {};
+      if (access) ud.token = access;
+      if (refresh) ud.refresh_token = refresh;
+      storage.set("userData", JSON.stringify(ud));
+    } catch {}
+  }
 };
 
 export const clearTokens = () => {
   storage.remove("access");
   storage.remove("refresh");
+  // ne touche pas à userData ici: leave it to your logout flow
 };
 
 /* ----------------------------- Instance Axios principale ----------------------------- */
 const api = axios.create({
-  baseURL: API_BASE + "/",          // ex: http://127.0.0.1:8000/api/
-  timeout: DEFAULT_TIMEOUT_MS,
+  baseURL: API_BASE.endsWith("/") ? API_BASE : API_BASE + "/",
+  timeout: 30000,
   headers: { Accept: "application/json" },
 });
+
 
 /* ----------------------------- Interceptor: Request ---------------------------------- */
 api.interceptors.request.use((config) => {
@@ -74,9 +93,7 @@ let isRefreshing = false;
 let subscribers = [];
 
 function notifySubscribers(newAccessOrNull) {
-  subscribers.forEach((cb) => {
-    try { cb(newAccessOrNull); } catch { /* noop */ }
-  });
+  subscribers.forEach((cb) => { try { cb(newAccessOrNull); } catch {} });
   subscribers = [];
 }
 function addSubscriber(cb) { subscribers.push(cb); }
@@ -94,10 +111,8 @@ api.interceptors.response.use(
     const original = err?.config;
     const status = err?.response?.status;
 
-    // Pas de réponse/Config -> propage
     if (!original || !err.response) return Promise.reject(err);
 
-    // On ne tente qu'une seule fois par requête
     if (status === 401 && !original._retry) {
       original._retry = true;
 
@@ -108,7 +123,6 @@ api.interceptors.response.use(
         return Promise.reject(err);
       }
 
-      // Si un refresh tourne, on met en file d'attente
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           addSubscriber((newAccess) => {
@@ -122,8 +136,12 @@ api.interceptors.response.use(
 
       try {
         isRefreshing = true;
-        // Utiliser axios "nu" pour éviter d'entrer dans cet interceptor
-        const resp = await axios.post(`${API_BASE}/${DEFAULT_REFRESH_ENDPOINT}`, { refresh }, { timeout: DEFAULT_TIMEOUT_MS });
+        // axios "nu" pour éviter boucle d'interceptors
+        const resp = await axios.post(
+          `${API_BASE}/${DEFAULT_REFRESH_ENDPOINT}`,
+          { refresh },
+          { timeout: DEFAULT_TIMEOUT_MS }
+        );
         const { access: newAccess, refresh: rotatedRefresh } = resp.data || {};
 
         if (!newAccess) {
@@ -133,10 +151,9 @@ api.interceptors.response.use(
           return Promise.reject(err);
         }
 
-        // Support rotation: si le serveur renvoie un refresh, on le stocke
         setTokens({ access: newAccess, refresh: rotatedRefresh || refresh });
-
         notifySubscribers(newAccess);
+
         original.headers = original.headers || {};
         original.headers.Authorization = `Bearer ${newAccess}`;
         return api(original);
@@ -150,32 +167,24 @@ api.interceptors.response.use(
       }
     }
 
-    // Autres erreurs -> propage
     return Promise.reject(err);
   }
 );
 
 /* ------------------------------- Helpers d'auth ------------------------------------- */
 
-/**
- * loginCustom: POST /api/login/ (ta LoginView custom)
- * Doit renvoyer {access, refresh, role?, agence_id?}
- */
+/** /api/login/ custom: renvoie {access, refresh, role?, agence_id?} */
 export async function loginCustom({ username, password, agence }) {
   const payload = { username, password };
   if (agence != null) payload.agence = agence;
   const { data } = await axios.post(`${API_BASE}/login/`, payload, { timeout: DEFAULT_TIMEOUT_MS });
-
   const { access, refresh } = data || {};
   if (!access || !refresh) throw new Error("Jetons JWT manquants (login custom)");
   setTokens({ access, refresh });
   return data;
 }
 
-/**
- * loginSimpleJWT: POST /api/token/ (SimpleJWT standard)
- * Renvoie {access, refresh}
- */
+/** /api/token/ (SimpleJWT standard) */
 export async function loginSimpleJWT({ username, password }) {
   const { data } = await axios.post(`${API_BASE}/${DEFAULT_LOGIN_ENDPOINT}`, { username, password }, { timeout: DEFAULT_TIMEOUT_MS });
   const { access, refresh } = data || {};
@@ -184,29 +193,22 @@ export async function loginSimpleJWT({ username, password }) {
   return data;
 }
 
-/**
- * loginAuto: tente /login/ puis fallback /token/ (pratique quand tu switches)
- */
+/** Essaie /login/, sinon fallback /token/ */
 export async function loginAuto({ username, password, agence }) {
   try {
     return await loginCustom({ username, password, agence });
   } catch (e) {
     const sc = e?.response?.status;
-    // si l'endpoint custom n'existe pas (404) ou n'accepte pas GET (405) côté test manuel
-    if (sc === 404 || sc === 405) {
-      return await loginSimpleJWT({ username, password });
-    }
+    if (sc === 404 || sc === 405) return await loginSimpleJWT({ username, password });
     throw e;
   }
 }
 
-/** Vérifie l’auth côté UI */
 export function getAuthState() {
   const { access, refresh } = getTokens();
   return { isAuthenticated: Boolean(access), hasRefresh: Boolean(refresh) };
 }
 
-/** Déconnexion */
 export function logout() {
   clearTokens();
   redirectToLogin();

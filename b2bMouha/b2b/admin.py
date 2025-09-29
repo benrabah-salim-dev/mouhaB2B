@@ -10,7 +10,7 @@ from .models import (
     Zone, Produit, ProduitEtape, ProduitTarif, ReservationProduit, VehicleOffer,
 )
 
-
+from .models import FicheMouvement, FicheMouvementItem  # si pas déjà importés en haut
 # =========================
 # Tiers / Profils / Succursales
 # =========================
@@ -182,6 +182,23 @@ class OrdreMissionAdmin(admin.ModelAdmin):
     autocomplete_fields = ('mission', 'vehicule', 'chauffeur')
     readonly_fields = ('reference',)
 
+
+@admin.register(FicheMouvement)
+class FicheMouvementAdmin(admin.ModelAdmin):
+    list_display = ("id", "agence", "type", "date", "aeroport", "name", "created_at")
+    list_filter  = ("agence", "type", "aeroport", "date", "created_at")
+    search_fields = ("name", "aeroport")
+    date_hierarchy = "date"
+    autocomplete_fields = ("agence",)
+    ordering = ("-date", "-id")
+
+@admin.register(FicheMouvementItem)
+class FicheMouvementItemAdmin(admin.ModelAdmin):
+    list_display = ("id", "fiche", "dossier")
+    search_fields = ("dossier__reference", "fiche__name")
+    list_filter = ("fiche__agence", "fiche__date", "fiche__type")
+    autocomplete_fields = ("fiche", "dossier")
+    ordering = ("-id",)
 
 # =========================
 # Zones / Produits (Excursions & Navettes)

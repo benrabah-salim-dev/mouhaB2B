@@ -13,6 +13,8 @@ from reportlab.pdfgen import canvas
 from ..models import PreMission, Mission, OrdreMission, Vehicule, Chauffeur
 from ..serializers import PreMissionSerializer, MissionSerializer, OrdreMissionSerializer
 from .helpers import _user_role, _user_agence, _ensure_same_agence_or_superadmin, generate_unique_reference
+from .mission_pdf import build_om_pdf_response
+
 
 class PreMissionViewSet(viewsets.ModelViewSet):
     serializer_class = PreMissionSerializer

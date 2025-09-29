@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import api from "../../api";
 import { AuthContext } from "../../context/AuthContext";
@@ -52,6 +52,7 @@ const formatRefFromDateKey = (dateKey) => (dateKey ? `M_${dateKey}` : null);
 const normalizeRows = (rows) => rows.map((d) => ({ ...d, _type: deriveType(d), _to: d?._to ?? pickTO(d), _ref_to: d?._ref_to ?? pickRefTO(d) }));
 const rowKeyOf = (r, i) => String(r?.id ?? r?.reference ?? `row_${i}`);
 
+/** ================= Hook ================= **/
 export function useFicheMouvement() {
   const navigate = useNavigate();
   const params = useParams();
@@ -59,7 +60,8 @@ export function useFicheMouvement() {
   const localUser = JSON.parse(localStorage.getItem("userData") || "{}");
   const user = ctxUser || localUser;
   const currentAgenceId = params.agence_id || user?.agence_id || "";
-  const LS_KEY = currentAgenceId ? `dossiersImportes:${currentAgenceId}` : "dossiersImportes";
+
+  // ⚠️ on ne persiste plus les rows, seulement les filtres
   const FILTERS_KEY = currentAgenceId ? `ficheMvtFilters:${currentAgenceId}` : "ficheMvtFilters";
 
   /* State */
@@ -88,7 +90,9 @@ export function useFicheMouvement() {
   /* Langues */
   useEffect(() => {
     (async () => {
-      try { const res = await api.get("languages/"); const langs = Array.isArray(res.data) ? res.data : [];
+      try {
+        const res = await api.get("languages/");
+        const langs = Array.isArray(res.data) ? res.data : [];
         setLanguages(langs);
         if (langs.length && !langs.find((l) => l.code === selectedLanguage)) setSelectedLanguage(langs[0].code);
       } catch {}
@@ -96,21 +100,30 @@ export function useFicheMouvement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* Reload import */
-  useEffect(() => {
-    const saved = localStorage.getItem(LS_KEY);
-    if (!saved) return;
+  /** ======= Backed list (source de vérité) ======= **/
+  const refetch = useCallback(async () => {
+    setLoading(true);
+    setMsg("");
     try {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed)) {
-        const normalized = normalizeRows(parsed);
-        setRows(normalized);
-        setMsg(`Import rechargé (${normalized.length}) pour l'agence ${currentAgenceId || "—"}.`);
-      }
-    } catch {}
-  }, [LS_KEY, currentAgenceId]);
+      // on peut passer quelques filtres serveur pour réduire la charge
+      const paramsSrv = {};
+      if (airportSel) paramsSrv.aeroport = airportSel;
+      // on laisse le filtrage fin côté front pour garder ton UX identique
+      const { data } = await api.get("dossiers-importables/", { params: paramsSrv });
+      const list = Array.isArray(data) ? data : [];
+      setRows(normalizeRows(list));
+      if (!list.length) setMsg("Aucun dossier importable pour le moment.");
+    } catch (err) {
+      const m = err?.response?.data?.detail || err?.response?.data?.error || err?.message || "Erreur chargement dossiers.";
+      setMsg(m);
+    } finally {
+      setLoading(false);
+    }
+  }, [airportSel]);
 
-  /* Hydrate filtres sauvegardés */
+  useEffect(() => { refetch(); }, [refetch]);
+
+  /* Hydrate filtres sauvegardés (pas les rows) */
   useEffect(() => {
     try {
       const raw = localStorage.getItem(FILTERS_KEY);
@@ -228,18 +241,29 @@ export function useFicheMouvement() {
   useEffect(() => { if (!tosSel.length) return; if (!villesSel.length && villeOptions.length === 1) setVillesSel([villeOptions[0].ville]); }, [tosSel.length, villeOptions, villesSel.length]);
   useEffect(() => { if (!villesSel.length) return; if (!hotelsSel.length && hotelOptions.length === 1) setHotelsSel([hotelOptions[0].hotel]); }, [villesSel.length, hotelOptions, hotelsSel.length]);
 
-  /* Filtrage dossiers */
+  /* Filtrage dossiers — EXIGE AUSSI UN VOL */
   const filteredRecords = useMemo(() => {
-    if (!tCode || !dateSel || !airportSel) return [];
+    if (!tCode || !dateSel || !airportSel || flightsSel.length === 0) return [];
     let filtered = rows
       .filter((r) => r._type === tCode)
       .filter((r) => getDateKey(r) === dateSel)
-      .filter((r) => (tCode === "D" ? (r.aeroport_depart || "").trim() === airportSel : (r.aeroport_arrivee || "").trim() === airportSel));
-    if (flightsSel.length > 0) filtered = filtered.filter((r) => flightsSel.includes(getFlightNo(r, tCode) || "—"));
-    if (tosSel.length > 0) { const st = new Set(tosSel); filtered = filtered.filter((r) => r._to && st.has(r._to)); }
-    if (villesSel.length > 0) { const sv = new Set(villesSel.map((x)=>String(x).trim())); filtered = filtered.filter((r) => sv.has((r.ville || "").toString().trim() || "—")); }
+      .filter((r) =>
+        tCode === "D"
+          ? (r.aeroport_depart || "").trim() === airportSel
+          : (r.aeroport_arrivee || "").trim() === airportSel
+      )
+      .filter((r) => flightsSel.includes(getFlightNo(r, tCode) || "—"));
+
+    if (tosSel.length > 0) {
+      const st = new Set(tosSel);
+      filtered = filtered.filter((r) => r._to && st.has(r._to));
+    }
+    if (villesSel.length > 0) {
+      const sv = new Set(villesSel.map((x) => String(x).trim()));
+      filtered = filtered.filter((r) => sv.has((r.ville || "").toString().trim() || "—"));
+    }
     if (hotelsSel.length > 0) {
-      const sh = new Set(hotelsSel.map((x)=>String(x).trim()));
+      const sh = new Set(hotelsSel.map((x) => String(x).trim()));
       filtered = filtered.filter((r) => {
         const hotel =
           (typeof r.hotel_nom === "string" && r.hotel_nom) ||
@@ -291,7 +315,7 @@ export function useFicheMouvement() {
     [selectedRows]
   );
 
-  /* Import fichier */
+  /* Import fichier → crée/MAJ des Dossiers côté back, puis REFRESH serveur */
   const onFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -299,37 +323,40 @@ export function useFicheMouvement() {
     setTypeSel(null); setDateSel(""); setAirportSel("");
     setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
     setSelectedDossierIds(new Set()); setOpenObs(new Set());
-    try { localStorage.removeItem(FILTERS_KEY); } catch {}
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("agence", currentAgenceId);
-    formData.append("langue", selectedLanguage);
     try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("agence", currentAgenceId);
+      formData.append("langue", selectedLanguage);
       const res = await api.post("importer-dossier/", formData, { headers: { "Content-Type": "multipart/form-data" } });
-      const list = Array.isArray(res.data?.dossiers) ? res.data.dossiers : [];
-      const normalized = normalizeRows(list);
-      localStorage.setItem(LS_KEY, JSON.stringify(normalized));
-      setRows(normalized);
-      const total = normalized.length, crees = res.data?.dossiers_crees?.length || 0, maj = res.data?.dossiers_mis_a_jour?.length || 0;
+      const total = Array.isArray(res.data?.dossiers) ? res.data.dossiers.length : 0;
+      const crees = res.data?.dossiers_crees?.length || 0;
+      const maj = res.data?.dossiers_mis_a_jour?.length || 0;
       setMsg(total ? `Import OK — ${crees} créé(s), ${maj} MAJ, total ${total}.` : "Aucune ligne exploitable.");
-    } catch {
-      setMsg("Erreur lors de l'importation.");
+      // 🔁 récupère la liste *réelle* des dossiers importables
+      await refetch();
+    } catch (err) {
+      const m = err?.response?.data?.detail || err?.response?.data?.error || err?.message || "Erreur lors de l'importation.";
+      setMsg(m);
     } finally {
-      setLoading(false); e.target.value = "";
+      setLoading(false);
+      e.target.value = "";
     }
   };
 
-  const clearImport = () => {
-    localStorage.removeItem(LS_KEY);
+  const clearImport = async () => {
+    // on vide juste l'affichage local et les filtres (les Dossiers restent en BD)
     localStorage.removeItem(FILTERS_KEY);
     setRows([]);
     setTypeSel(null); setDateSel(""); setAirportSel("");
     setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
     setSelectedDossierIds(new Set()); setOpenObs(new Set());
-    setMsg("Import local vidé.");
+    setMsg("Filtres réinitialisés.");
+    // et on recharge depuis le serveur
+    await refetch();
   };
 
-  /* Création + retrait des dossiers */
+  /* Création (UNE fiche même si plusieurs hôtels) */
   const onCreate = async () => {
     setMsg("");
     if (!currentAgenceId) { setMsg("Agence inconnue. Ouvrez via /agence/:agence_id/fiche-mouvement."); return; }
@@ -339,7 +366,7 @@ export function useFicheMouvement() {
     const selRows = filteredRecords.filter((r) => selectedDossierIds.has(r.id));
     const payload = {
       agence: currentAgenceId,
-      name: movementName || null,
+      name: (movementName || "").trim(),
       type: tCode,
       date: dateSel,
       aeroport: airportSel,
@@ -352,39 +379,12 @@ export function useFicheMouvement() {
     try {
       setCreating(true);
       await api.post("creer-fiche-mouvement/", payload);
-
-      // Retirer les dossiers créés
-      const createdIds = new Set(selRows.map((r) => r.id).filter(Boolean));
-      const remaining = rows.filter((r) => !createdIds.has(r.id));
-      setRows(remaining);
-      localStorage.setItem(LS_KEY, JSON.stringify(remaining));
-      setMsg(`Fiche créée : ${selRows.length} dossier(s) retiré(s). Restant : ${remaining.length}.`);
-
-      // Aller à la liste (les filtres restent sauvegardés)
+      // ✅ après création, on recharge la liste serveur (les dossiers sélectionnés disparaissent)
+      await refetch();
       navigate(`/agence/${currentAgenceId}/fiches-mouvement`, { replace: true });
     } catch (err) {
-      const status = err?.response?.status; const data = err?.response?.data || {};
-      if (status === 409) {
-        const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
-        const hint = suggestions.length ? `\nSuggestions: ${suggestions.join(", ")}` : "";
-        const newRef = window.prompt((data.message || "Référence déjà utilisée.") + hint, payload.reference || "");
-        if (newRef && newRef.trim()) {
-          try {
-            await api.post("creer-fiche-mouvement/", { ...payload, reference: newRef.trim() });
-            const createdIds = new Set(selRows.map((r) => r.id).filter(Boolean));
-            const remaining = rows.filter((r) => !createdIds.has(r.id));
-            setRows(remaining);
-            localStorage.setItem(LS_KEY, JSON.stringify(remaining));
-            navigate(`/agence/${currentAgenceId}/fiches-mouvement`, { replace: true });
-          } catch (e2) {
-            setMsg(e2?.response?.data?.detail || e2?.response?.data?.error || "Échec avec la nouvelle référence.");
-          }
-        } else {
-          setMsg(data.message || "Opération annulée.");
-        }
-      } else {
-        setMsg(data?.detail || data?.error || "Erreur lors de la création de la fiche de mouvement.");
-      }
+      const m = err?.response?.data?.detail || err?.response?.data?.error || "Erreur lors de la création.";
+      setMsg(m);
     } finally {
       setCreating(false);
     }
@@ -409,11 +409,14 @@ export function useFicheMouvement() {
     tCode,
     dateOptions, airportOptions, flightOptions, toOptions, villeOptions, hotelOptions,
     filteredRecords, groupedByHotel,
-    selectedCount, selectedPax, obsCount,
+    selectedCount, selectedPax: useMemo(() => filteredRecords.filter((r) => selectedDossierIds.has(r.id)).reduce((acc, r) => acc + getPaxForType(r, tCode), 0), [filteredRecords, selectedDossierIds, tCode]),
+    obsCount: useMemo(() => filteredRecords.filter((r) => selectedDossierIds.has(r.id)).reduce((acc, r) => acc + (r.observation && String(r.observation).trim() ? 1 : 0), 0), [filteredRecords, selectedDossierIds]),
     // actions
     onFile, clearImport, onCreate,
     // utils
     getPaxDisplay, rowKeyOf,
-    currentAgenceId, navigate
+    currentAgenceId, navigate,
+    // refresh manuel si besoin depuis l'UI
+    refetch,
   };
 }

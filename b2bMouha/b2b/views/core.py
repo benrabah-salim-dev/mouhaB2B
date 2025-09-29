@@ -1,17 +1,16 @@
-# b2b/views/core.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from io import BytesIO
 
-from django.shortcuts import get_object_or_404
 from django.core.exceptions import PermissionDenied
-from django.utils import timezone
+from django.http import FileResponse
+from django.shortcuts import get_object_or_404
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from django.http import FileResponse
+from rest_framework.views import APIView
 
 from b2b.models import (
     AgenceVoyage,
@@ -28,6 +27,7 @@ from b2b.views.helpers import (
     _user_agence,
     _ensure_same_agence_or_superadmin,
     IsSuperAdminRole,
+    queryset_dossiers_non_traite,
 )
 from b2b.serializers import (
     AgenceVoyageSerializer,
@@ -62,7 +62,6 @@ class AgenceVoyageViewSet(viewsets.ModelViewSet):
             return qs.filter(id=getattr(_user_agence(self.request.user), "id", None))
         return AgenceVoyage.objects.none()
 
-
 # -----------------------------
 # Véhicule
 # -----------------------------
@@ -78,7 +77,6 @@ class VehiculeViewSet(viewsets.ModelViewSet):
         if role == "adminagence":
             return qs.filter(agence=_user_agence(self.request.user))
         return Vehicule.objects.none()
-
 
 # -----------------------------
 # Chauffeur
@@ -96,7 +94,6 @@ class ChauffeurViewSet(viewsets.ModelViewSet):
             return qs.filter(agence=_user_agence(self.request.user))
         return Chauffeur.objects.none()
 
-
 # -----------------------------
 # Hotel
 # -----------------------------
@@ -107,9 +104,8 @@ class HotelViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return Hotel.objects.all()
 
-
 # -----------------------------
-# Dossier
+# Dossier (viewset générique)
 # -----------------------------
 class DossierViewSet(viewsets.ModelViewSet):
     serializer_class = DossierSerializer
@@ -125,6 +121,37 @@ class DossierViewSet(viewsets.ModelViewSet):
             return qs.filter(agence=_user_agence(self.request.user))
         return Dossier.objects.none()
 
+# -----------------------------
+# Liste "non traités" + filtres simples (API dédiée)
+# -----------------------------
+class DossierListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        agence_id = request.query_params.get("agence")
+        if not agence_id:
+            return Response({"detail": "Paramètre 'agence' requis."}, status=400)
+        ag = get_object_or_404(AgenceVoyage, id=agence_id)
+        # sécurité : même agence ou superadmin
+        _ensure_same_agence_or_superadmin(request, ag)
+
+        hide_used = request.query_params.get("hide_used") in {"1", "true", "True"}
+        qs = queryset_dossiers_non_traite(ag) if hide_used else Dossier.objects.filter(agence=ag)
+
+        # Filtres optionnels
+        tcode = request.query_params.get("type")  # "A" / "D"
+        date  = request.query_params.get("date")  # "YYYY-MM-DD"
+
+        if tcode == "A":
+            qs = qs.filter(heure_arrivee__isnull=False, heure_depart__isnull=True)
+        elif tcode == "D":
+            qs = qs.filter(heure_depart__isnull=False, heure_arrivee__isnull=True)
+
+        if date:
+            qs = qs.filter(heure_arrivee__date=date) | qs.filter(heure_depart__date=date)
+
+        data = DossierSerializer(qs, many=True).data
+        return Response({"dossiers": data}, status=200)
 
 # -----------------------------
 # PreMission
@@ -166,7 +193,6 @@ class PreMissionViewSet(viewsets.ModelViewSet):
         _ensure_same_agence_or_superadmin(self.request, instance.agence)
         instance.delete()
 
-
 # -----------------------------
 # Mission
 # -----------------------------
@@ -186,7 +212,7 @@ class MissionViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="generate-om")
     def generate_om(self, request, pk=None):
         """
-        Génère un ordre de mission (et retourne un PDF minimal en pièce jointe)
+        Génère un ordre de mission (retourne un PDF minimal en pièce jointe)
         Requiert: vehicule (id), chauffeur (id)
         """
         mission = self.get_object()
@@ -211,7 +237,7 @@ class MissionViewSet(viewsets.ModelViewSet):
         mission.ordre_mission_genere = True
         mission.save(update_fields=["ordre_mission_genere"])
 
-        # Petit PDF minimaliste pour rester compatible avec ton front (responseType: "blob")
+        # PDF simple
         from reportlab.pdfgen import canvas
         buffer = BytesIO()
         p = canvas.Canvas(buffer)
@@ -227,7 +253,6 @@ class MissionViewSet(viewsets.ModelViewSet):
         p.save()
         buffer.seek(0)
         return FileResponse(buffer, as_attachment=True, filename=f"ordre_mission_{ordre.reference}.pdf")
-
 
 # -----------------------------
 # Ordre de Mission
