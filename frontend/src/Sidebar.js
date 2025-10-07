@@ -1,22 +1,29 @@
 // src/components/Sidebar.js
-import React from "react";
-import { NavLink } from "react-router-dom";
+import React, { useState, useMemo } from "react";
+import { NavLink, useLocation } from "react-router-dom";
 import {
-  FaFileImport,
   FaUsers,
   FaCar,
   FaSignOutAlt,
   FaHome,
   FaSyncAlt,
-  FaMapMarkedAlt
+  FaMapMarkedAlt,
+  FaPlaneDeparture,
+  FaPlaneArrival,
+  FaTasks,
+  FaChevronDown,
+  FaExchangeAlt,
+  FaShuttleVan
 } from "react-icons/fa";
 
-function SidebarLink({ to, icon, children }) {
+function SidebarLink({ to, icon, children, extraClass, end }) {
   return (
     <NavLink
       to={to}
+      end={end}
       className={({ isActive }) =>
         "d-flex align-items-center gap-2 px-3 py-2 rounded " +
+        (extraClass ? extraClass + " " : "") +
         (isActive ? "bg-light text-dark fw-semibold" : "text-white-50 hover-white")
       }
       style={{ textDecoration: "none" }}
@@ -27,7 +34,60 @@ function SidebarLink({ to, icon, children }) {
   );
 }
 
+function SectionHeader({ label, icon, active, open, onToggle }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={
+        "w-100 d-flex align-items-center justify-content-between px-3 py-2 rounded border-0 " +
+        (active ? "bg-light text-dark fw-semibold" : "text-white-50 hover-white bg-transparent")
+      }
+      style={{ textAlign: "left" }}
+      aria-expanded={open}
+    >
+      <span className="d-flex align-items-center gap-2">
+        {icon}
+        {label}
+      </span>
+      <FaChevronDown
+        style={{
+          transition: "transform .2s",
+          transform: open ? "rotate(180deg)" : "rotate(0deg)",
+          opacity: 0.8
+        }}
+      />
+    </button>
+  );
+}
+
 const Sidebar = ({ agenceId, onRefresh, refreshing, onLogout, agenceNom, role }) => {
+  const location = useLocation();
+
+  // Activation & ouverture auto des sections selon la route courante
+  const fmActive = useMemo(() => {
+    const base = `/agence/${agenceId}`;
+    return (
+      location.pathname.startsWith(`${base}/fiches-mouvement`) ||
+      location.pathname.startsWith(`${base}/mes-departs`) ||
+      location.pathname.startsWith(`${base}/mes-arrivees`) ||
+      location.pathname.startsWith(`${base}/fiche-mouvement`)
+    );
+  }, [location.pathname, agenceId]);
+
+  const missionsActive = useMemo(() => {
+    const base = `/agence/${agenceId}/missions`;
+    return (
+      location.pathname.startsWith(base) ||
+      location.pathname.startsWith(`/agence/${agenceId}/missions/transferts`) ||
+      location.pathname.startsWith(`/agence/${agenceId}/missions/excursions`) ||
+      location.pathname.startsWith(`/agence/${agenceId}/missions/navettes`)
+    );
+  }, [location.pathname, agenceId]);
+
+  const [openFM, setOpenFM] = useState(fmActive);
+  const [openMissions, setOpenMissions] = useState(missionsActive);
+
   return (
     <aside
       className="d-flex flex-column p-3 text-white"
@@ -64,32 +124,90 @@ const Sidebar = ({ agenceId, onRefresh, refreshing, onLogout, agenceNom, role })
       </div>
 
       {/* Menu */}
-    <nav className="mt-2" style={{ rowGap: 8, display: "grid" }}>
-  <SidebarLink to={`/agence/${agenceId}/dossiers`} icon={<FaFileImport />}>
-    Dossiers
-  </SidebarLink>
-  <SidebarLink to={`/agence/${agenceId}/ressources`} icon={<FaUsers />}>
-    Ressources
-  </SidebarLink>
+      <nav className="mt-2" style={{ rowGap: 8, display: "grid" }}>
+        <SidebarLink to={`/agence/${agenceId}/ressources`} icon={<FaUsers />}>
+          Ressources
+        </SidebarLink>
 
-  {/* Nouveau bouton Mes excursions */}
-  <SidebarLink to={`/agence/${agenceId}/mes-excursions`} icon={<FaMapMarkedAlt />}>
-    Mes excursions
-  </SidebarLink>
+        {/* Section: Fiches de mouvement */}
+        <SectionHeader
+          label="Fiches de mouvement"
+          icon={<FaCar />}
+          active={fmActive}
+          open={openFM}
+          onToggle={() => setOpenFM(v => !v)}
+        />
+        {openFM && (
+          <>
+            <SidebarLink
+              to={`/agence/${agenceId}/mes-departs`}
+              icon={<FaPlaneDeparture />}
+              extraClass="ps-4 small"
+              end
+            >
+              Mes départs
+            </SidebarLink>
+            <SidebarLink
+              to={`/agence/${agenceId}/mes-arrivees`}
+              icon={<FaPlaneArrival />}
+              extraClass="ps-4 small"
+              end
+            >
+              Mes arrivées
+            </SidebarLink>
+            <SidebarLink
+              to={`/agence/${agenceId}/fiche-mouvement`}
+              icon={<FaCar />}
+              extraClass="ps-4 small"
+              end
+            >
+              Créer fiche de mouvement
+            </SidebarLink>
+          </>
+        )}
 
-  <SidebarLink to={`/agence/${agenceId}/fiches-mouvement`} icon={<FaCar />}>
-    Fiches de mouvement
-  </SidebarLink>
-  <SidebarLink to={`/agence/${agenceId}/fiche-mouvement`} icon={<FaCar />}>
-    Créer fiche de mouvement
-  </SidebarLink>
-  <SidebarLink to={`/ordres-mission`} icon={<FaCar />}>
-    Ordres de Mission
-  </SidebarLink>
-</nav>
+        {/* Section: Mes missions (avec sous-liens) */}
+        <SectionHeader
+          label="Mes missions"
+          icon={<FaTasks />}
+          active={missionsActive}
+          open={openMissions}
+          onToggle={() => setOpenMissions(v => !v)}
+        />
+        {openMissions && (
+          <>
+            <SidebarLink
+              to={`/agence/${agenceId}/missions/transferts`}
+              icon={<FaExchangeAlt />}
+              extraClass="ps-4 small"
+              end
+            >
+              Mes transferts
+            </SidebarLink>
+            <SidebarLink
+              to={`/agence/${agenceId}/missions/excursions`}
+              icon={<FaMapMarkedAlt />}
+              extraClass="ps-4 small"
+              end
+            >
+              Mes excursions
+            </SidebarLink>
+            <SidebarLink
+              to={`/agence/${agenceId}/missions/navettes`}
+              icon={<FaShuttleVan />}
+              extraClass="ps-4 small"
+              end
+            >
+              Mes navettes
+            </SidebarLink>
+          </>
+        )}
 
-
-      
+        {/* Ordres de Mission */}
+        <SidebarLink to={`/ordres-mission`} icon={<FaCar />} end>
+          Ordres de Mission
+        </SidebarLink>
+      </nav>
 
       {/* Boutons bas */}
       <div className="mt-auto">

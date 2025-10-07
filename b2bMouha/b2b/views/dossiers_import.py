@@ -37,6 +37,7 @@ class DossiersImportablesAPIView(APIView):
       - type: 'A' | 'D'   (arrivée vs départ → filtre heure_arrivee/heure_depart non null)
       - date_from, date_to: YYYY-MM-DD (appliqué sur la date de l'heure correspondante)
     """
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -59,7 +60,10 @@ class DossiersImportablesAPIView(APIView):
         # Filtres simples
         aeroport = (request.query_params.get("aeroport") or "").strip()
         if aeroport:
-            qs = qs.filter(Q(aeroport_arrivee__iexact=aeroport) | Q(aeroport_depart__iexact=aeroport))
+            qs = qs.filter(
+                Q(aeroport_arrivee__iexact=aeroport)
+                | Q(aeroport_depart__iexact=aeroport)
+            )
 
         t = (request.query_params.get("type") or "").strip().upper()
         if t == "A":
@@ -85,9 +89,13 @@ class DossiersImportablesAPIView(APIView):
                 # si type non précisé, on accepte si l'une des deux heures est dans la fenêtre
                 conds = Q()
                 if dfrom:
-                    conds |= Q(heure_arrivee__date__gte=dfrom) | Q(heure_depart__date__gte=dfrom)
+                    conds |= Q(heure_arrivee__date__gte=dfrom) | Q(
+                        heure_depart__date__gte=dfrom
+                    )
                 if dto:
-                    conds &= Q(heure_arrivee__date__lte=dto) | Q(heure_depart__date__lte=dto)
+                    conds &= Q(heure_arrivee__date__lte=dto) | Q(
+                        heure_depart__date__lte=dto
+                    )
                 qs = qs.filter(conds)
 
         # Tri récent d'abord (heure la plus proche), fallback par id

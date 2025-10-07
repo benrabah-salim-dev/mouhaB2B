@@ -53,17 +53,32 @@ from .languages import LanguageMappingListView
 
 __all__ = [
     # helpers
-    "_user_role", "_user_agence", "_ensure_same_agence_or_superadmin", "IsSuperAdminRole",
+    "_user_role",
+    "_user_agence",
+    "_ensure_same_agence_or_superadmin",
+    "IsSuperAdminRole",
     # auth
-    "LoginView", "TokenRefreshAPIView", "UserMeAPIView",
+    "LoginView",
+    "TokenRefreshAPIView",
+    "UserMeAPIView",
     # core
-    "AgenceVoyageViewSet", "VehiculeViewSet", "ChauffeurViewSet", "HotelViewSet",
-    "DossierViewSet", "PreMissionViewSet", "MissionViewSet", "OrdreMissionViewSet",
+    "AgenceVoyageViewSet",
+    "VehiculeViewSet",
+    "ChauffeurViewSet",
+    "HotelViewSet",
+    "DossierViewSet",
+    "PreMissionViewSet",
+    "MissionViewSet",
+    "OrdreMissionViewSet",
     # importers
-    "ImporterDossierAPIView", "ImporterVehiculesAPIView", "ImporterChauffeursAPIView",
+    "ImporterDossierAPIView",
+    "ImporterVehiculesAPIView",
+    "ImporterChauffeursAPIView",
     # fiches
     "CreerFicheMouvementAPIView",
-    "FicheMouvementViewSet", "FicheMouvementItemViewSet", "ordre_mission_pdf",
+    "FicheMouvementViewSet",
+    "FicheMouvementItemViewSet",
+    "ordre_mission_pdf",
     # public
     "PublicResourceSearchAPIView",
     # languages

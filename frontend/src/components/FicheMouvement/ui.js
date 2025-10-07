@@ -1,4 +1,3 @@
-// src/components/FicheMouvement/ui.js
 import React from "react";
 
 /* Libellés */
@@ -66,7 +65,7 @@ export function TopSummaryBar({
       <div className="fm-top-summary-actions">
         <input
           className="form-control form-control-sm"
-          placeholder={tCode && dateSel && airportSel ? `${labelType(tCode)} ${airportSel} ${dateSel}` : "Nom de la fiche (optionnel)"}
+          placeholder={(tCode && dateSel && airportSel) ? `${labelType(tCode)} ${airportSel} ${dateSel}` : "Nom de la fiche (optionnel)"}
           value={movementName}
           onChange={(e) => setMovementName(e.target.value)}
         />

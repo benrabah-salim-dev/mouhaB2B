@@ -66,6 +66,10 @@ export default function App() {
         {/* Fiches mouvement LISTE (avec et sans agence_id) */}
         <Route path="/agence/:agence_id/fiches-mouvement" element={<FichesMouvementList />} />
         <Route path="/fiches-mouvement" element={<AgencyResolve segment="fiches-mouvement" />} />
+        <Route path="/agence/:agenceId/fiches-mouvement" element={<FichesMouvementList />} />
+<Route path="/agence/:agenceId/mes-departs" element={<FichesMouvementList />} />
+<Route path="/agence/:agenceId/mes-arrivees" element={<FichesMouvementList />} />
+
                 <Route path="/ordres-mission" element={<OrdresMissionList />} />
 
         {/* Fiche mouvement CREATION (avec et sans agence_id) */}

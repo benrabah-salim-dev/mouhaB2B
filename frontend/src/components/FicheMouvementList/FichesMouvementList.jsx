@@ -1,12 +1,12 @@
 // src/components/FicheMouvementList/FichesMouvementList.jsx
-import React, { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useLocation, useParams } from "react-router-dom";
 import api from "../../api";
 import AssignResourcesModal from "./AssignResourcesModal";
 import { fmtHour } from "./utils";
 import "./fichesList.css";
 
-/* UI bricoles très courtes */
+/* Badges */
 const BadgeType = ({ t }) => {
   const label = t === "A" ? "Arrivée" : t === "D" ? "Départ" : "—";
   const cls = t === "A" ? "bg-success" : t === "D" ? "bg-primary" : "bg-secondary";
@@ -46,27 +46,60 @@ const PortalModal = ({ title, children, onClose }) => (
 const asArray = (data) =>
   Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : [];
 
+/** Détecte le mode selon l'URL courante */
+function useFicheMode() {
+  const location = useLocation();
+  const path = location.pathname.toLowerCase();
+  if (path.includes("mes-departs")) return "D";
+  if (path.includes("mes-arrivees")) return "A";
+  return null;
+}
+
 export default function FichesMouvementList() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { agenceId } = useParams();
+  const mode = useFicheMode(); // "D" | "A" | null
+
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedMission, setSelectedMission] = useState(null);
   const [obsFullText, setObsFullText] = useState(null);
 
-  // Début = tel que reçu ; Fin = +3h (affichage)
   const END_OFFSET_MIN = 180;
+
+  const title = useMemo(() => {
+    if (mode === "D") return "🛫 Mes départs";
+    if (mode === "A") return "🛬 Mes arrivées";
+    return "📋 Fiches de mouvement";
+  }, [mode]);
+
+  const emptyMsg = useMemo(() => {
+    if (mode === "D") return "Aucun départ trouvé.";
+    if (mode === "A") return "Aucune arrivée trouvée.";
+    return "Aucune fiche trouvée.";
+  }, [mode]);
 
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("fiches-mouvement-list/");
-      setItems(asArray(data));
+      const url =
+        mode === "D" || mode === "A"
+          ? `fiches-mouvement-list/?type=${mode}`
+          : `fiches-mouvement-list/`;
+
+      const { data } = await api.get(url);
+      let arr = asArray(data);
+      if (mode === "D") arr = arr.filter(it => it?.type === "D");
+      if (mode === "A") arr = arr.filter(it => it?.type === "A");
+      setItems(arr);
     } catch (e) {
       console.error(e);
+      setItems([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [mode]);
 
   useEffect(() => { fetchList(); }, [fetchList]);
 
@@ -81,12 +114,11 @@ export default function FichesMouvementList() {
     );
   };
 
-  // Suppression d’une fiche (appelle le vrai endpoint DRF)
   const deleteFiche = async (fiche) => {
     if (!window.confirm(`Supprimer la fiche ${fiche.reference} ?`)) return;
     try {
       await api.delete(`fiches-mouvement/${fiche.id}/`);
-      await fetchList(); // on recharge depuis le back pour confirmer la suppression
+      await fetchList();
     } catch (e) {
       console.error(e);
       const detail =
@@ -100,13 +132,36 @@ export default function FichesMouvementList() {
 
   return (
     <div className="container mt-4">
+      {/* HEADER + boutons d'action */}
       <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-        <h2 className="m-0">📋 Fiches de mouvement</h2>
-        <button className="btn btn-outline-primary" onClick={() => navigate("/fiche-mouvement")}>
-          ↩ Retour
-        </button>
+        <h2 className="m-0">{title}</h2>
+
+        <div className="d-flex flex-wrap gap-2">
+          {/* Bouton retour */}
+          <button className="btn btn-outline-secondary" onClick={() => navigate(-1)}>
+            ↩ Retour
+          </button>
+
+          {/* Actualiser */}
+          <button className="btn btn-outline-primary" onClick={fetchList} disabled={loading}>
+            {loading ? "Actualisation…" : "Actualiser"}
+          </button>
+
+          {/* Créer une fiche (générique) + split pour départ/arrivée */}
+          <div className="btn-group">
+            <button
+              className="btn btn-primary"
+              onClick={() => navigate(`/agence/${agenceId}/fiche-mouvement`)}
+              title="Créer une nouvelle fiche de mouvement"
+            >
+              + Créer une fiche de mouvement
+            </button>
+  
+          </div>
+        </div>
       </div>
 
+      {/* TABLEAU */}
       <div className="table-responsive">
         <table className="table table-striped align-middle">
           <thead className="table-light">
@@ -174,7 +229,7 @@ export default function FichesMouvementList() {
               <tr><td colSpan={10} className="text-center py-4">Chargement…</td></tr>
             )}
             {!loading && !items.length && (
-              <tr><td colSpan={10} className="text-center text-muted py-4">Aucune fiche trouvée.</td></tr>
+              <tr><td colSpan={10} className="text-center text-muted py-4">{emptyMsg}</td></tr>
             )}
           </tbody>
         </table>
@@ -196,7 +251,7 @@ export default function FichesMouvementList() {
       {/* Modal Affectation */}
       {selectedMission && (
         <AssignResourcesModal
-          mission={selectedMission}     // ← on passe la fiche telle quelle
+          mission={selectedMission}
           onClose={() => setSelectedMission(null)}
           onCompleted={() => {
             fetchList();

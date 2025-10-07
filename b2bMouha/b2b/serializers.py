@@ -31,12 +31,13 @@ from .models import (
 
 # ============== Profil / User ==============
 
+
 class ProfileSerializer(serializers.ModelSerializer):
-    agence_nom = serializers.CharField(source='agence.nom', read_only=True)
+    agence_nom = serializers.CharField(source="agence.nom", read_only=True)
 
     class Meta:
         model = Profile
-        fields = ['role', 'agence', 'agence_nom']
+        fields = ["role", "agence", "agence_nom"]
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -44,66 +45,83 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'profile']
+        fields = ["id", "username", "email", "first_name", "last_name", "profile"]
 
 
 # ============== Agence / Véhicule / Chauffeur / Hotel ==============
 
+
 class AgenceVoyageSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgenceVoyage
-        fields = '__all__'
+        fields = "__all__"
 
 
 class VehiculeSerializer(serializers.ModelSerializer):
-    agence_nom = serializers.CharField(source='agence.nom', read_only=True)
+    agence_nom = serializers.CharField(source="agence.nom", read_only=True)
 
     class Meta:
         model = Vehicule
         fields = [
-            'id', 'type', 'marque', 'model', 'immatriculation',
-            'capacite', 'annee', 'agence', 'agence_nom'
+            "id",
+            "type",
+            "marque",
+            "model",
+            "immatriculation",
+            "capacite",
+            "annee",
+            "agence",
+            "agence_nom",
         ]
 
 
 class VehiculePublicSerializer(serializers.ModelSerializer):
-    agence_nom = serializers.CharField(source='agence.nom', read_only=True)
+    agence_nom = serializers.CharField(source="agence.nom", read_only=True)
 
     class Meta:
         model = Vehicule
-        fields = ['id', 'type', 'marque', 'model', 'immatriculation', 'capacite', 'agence_nom']
+        fields = [
+            "id",
+            "type",
+            "marque",
+            "model",
+            "immatriculation",
+            "capacite",
+            "agence_nom",
+        ]
 
 
 class ChauffeurSerializer(serializers.ModelSerializer):
-    agence_nom = serializers.CharField(source='agence.nom', read_only=True)
+    agence_nom = serializers.CharField(source="agence.nom", read_only=True)
 
     class Meta:
         model = Chauffeur
-        fields = ['id', 'nom', 'prenom', 'cin', 'agence', 'agence_nom']
+        fields = ["id", "nom", "prenom", "cin", "agence", "agence_nom"]
 
 
 class HotelSerializer(serializers.ModelSerializer):
     class Meta:
         model = Hotel
-        fields = '__all__'
+        fields = "__all__"
 
 
 # ============== Dossier & liés ==============
 
+
 class TouristeSerializer(serializers.ModelSerializer):
     class Meta:
         model = getattr(Dossier, "touristes").rel.model
-        fields = '__all__'
+        fields = "__all__"
 
 
 class DossierSerializer(serializers.ModelSerializer):
-    agence_nom = serializers.CharField(source='agence.nom', read_only=True)
-    hotel_nom = serializers.CharField(source='hotel.nom', read_only=True)
+    agence_nom = serializers.CharField(source="agence.nom", read_only=True)
+    hotel_nom = serializers.CharField(source="hotel.nom", read_only=True)
 
     touristes = serializers.PrimaryKeyRelatedField(
         many=True,
         queryset=getattr(Dossier, "touristes").rel.model.objects.all(),
-        required=False
+        required=False,
     )
 
     observation = serializers.CharField(required=False, allow_blank=True)
@@ -111,78 +129,118 @@ class DossierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Dossier
         fields = [
-            'id', 'reference', 'agence', 'agence_nom', 'ville',
-            'aeroport_arrivee', 'num_vol_arrivee', 'heure_arrivee',
-            'hotel', 'hotel_nom', 'nombre_personnes_arrivee', 'nom_reservation',
-            'touristes', 'aeroport_depart', 'heure_depart', 'num_vol_retour',
-            'nombre_personnes_retour', 'tour_operateur', 'observation'
+            "id",
+            "reference",
+            "agence",
+            "agence_nom",
+            "ville",
+            "aeroport_arrivee",
+            "num_vol_arrivee",
+            "heure_arrivee",
+            "hotel",
+            "hotel_nom",
+            "nombre_personnes_arrivee",
+            "nom_reservation",
+            "touristes",
+            "aeroport_depart",
+            "heure_depart",
+            "num_vol_retour",
+            "nombre_personnes_retour",
+            "tour_operateur",
+            "observation",
         ]
 
 
 # ============== PreMission / Mission / OrdreMission ==============
 
+
 class PreMissionSerializer(serializers.ModelSerializer):
-    agence_nom = serializers.CharField(source='agence.nom', read_only=True)
-    dossier_reference = serializers.CharField(source='dossier.reference', read_only=True)
+    agence_nom = serializers.CharField(source="agence.nom", read_only=True)
+    dossier_reference = serializers.CharField(
+        source="dossier.reference", read_only=True
+    )
 
     class Meta:
         model = PreMission
         fields = [
-            'id', 'reference', 'date_creation',
-            'agence', 'agence_nom',
-            'dossier', 'dossier_reference',
-            'trajet_prevu', 'remarques'
+            "id",
+            "reference",
+            "date_creation",
+            "agence",
+            "agence_nom",
+            "dossier",
+            "dossier_reference",
+            "trajet_prevu",
+            "remarques",
         ]
 
 
 class MissionSerializer(serializers.ModelSerializer):
-    premission_reference = serializers.CharField(source='premission.reference', read_only=True)
+    premission_reference = serializers.CharField(
+        source="premission.reference", read_only=True
+    )
 
     class Meta:
         model = Mission
         fields = [
-            'id', 'reference', 'premission', 'premission_reference',
-            'date_debut', 'date_fin', 'details', 'ordre_mission_genere'
+            "id",
+            "reference",
+            "premission",
+            "premission_reference",
+            "date_debut",
+            "date_fin",
+            "details",
+            "ordre_mission_genere",
         ]
 
 
 class OrdreMissionSerializer(serializers.ModelSerializer):
-    vehicule_immatriculation = serializers.CharField(source="vehicule.immatriculation", read_only=True)
+    vehicule_immatriculation = serializers.CharField(
+        source="vehicule.immatriculation", read_only=True
+    )
     vehicule_marque = serializers.CharField(source="vehicule.marque", read_only=True)
     chauffeur_nom = serializers.CharField(source="chauffeur.nom", read_only=True)
     chauffeur_prenom = serializers.CharField(source="chauffeur.prenom", read_only=True)
-    agence_nom = serializers.CharField(source="mission.premission.agence.nom", read_only=True)
-    mission_reference = serializers.CharField(source="mission.reference", read_only=True)
+    agence_nom = serializers.CharField(
+        source="mission.premission.agence.nom", read_only=True
+    )
+    mission_reference = serializers.CharField(
+        source="mission.reference", read_only=True
+    )
 
     class Meta:
         model = OrdreMission
-        fields = [
-            "id", "reference", "mission", "mission_reference", "agence_nom",
-            "date_depart", "date_retour", "trajet",
-            "vehicule", "vehicule_immatriculation", "vehicule_marque",
-            "chauffeur", "chauffeur_nom", "chauffeur_prenom"
-        ]
+        fields = "__all__"
 
 
 # ============== LanguageMapping ==============
 
+
 class LanguageMappingSerializer(serializers.ModelSerializer):
     class Meta:
         model = LanguageMapping
-        fields = '__all__'
+        fields = "__all__"
 
 
 # ============== Fiches Mouvement (list/detail pour l’UI) ==============
+
 
 class DossierLiteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Dossier
         fields = (
-            "id", "reference", "nom_reservation", "ville",
-            "aeroport_depart", "aeroport_arrivee",
-            "heure_depart", "heure_arrivee",
-            "num_vol_arrivee", "num_vol_retour",
-            "nombre_personnes_arrivee", "nombre_personnes_retour",
+            "id",
+            "reference",
+            "nom_reservation",
+            "ville",
+            "aeroport_depart",
+            "aeroport_arrivee",
+            "heure_depart",
+            "heure_arrivee",
+            "num_vol_arrivee",
+            "num_vol_retour",
+            "nombre_personnes_arrivee",
+            "nombre_personnes_retour",
             "observation",
         )
 
@@ -206,33 +264,49 @@ class FicheMouvementListSerializer(serializers.ModelSerializer):
 class FicheMouvementDetailSerializer(serializers.ModelSerializer):
     items = FicheMouvementItemNestedSerializer(many=True, read_only=True)
     agence_nom = serializers.CharField(source="agence.nom", read_only=True)
-    created_by_username = serializers.CharField(source="created_by.username", read_only=True)
+    created_by_username = serializers.CharField(
+        source="created_by.username", read_only=True
+    )
 
     class Meta:
         model = FicheMouvement
         fields = (
-            "id", "name", "type", "date", "aeroport",
-            "agence_nom", "created_by_username", "created_at", "items"
+            "id",
+            "name",
+            "type",
+            "date",
+            "aeroport",
+            "agence_nom",
+            "created_by_username",
+            "created_at",
+            "items",
         )
 
 
 # ============== Fiche Mouvement CRUD ==============
 
+
 class FicheMouvementItemSerializer(serializers.ModelSerializer):
-    dossier_reference = serializers.CharField(source='dossier.reference', read_only=True)
+    dossier_reference = serializers.CharField(
+        source="dossier.reference", read_only=True
+    )
 
     class Meta:
         model = FicheMouvementItem
-        fields = ['id', 'fiche', 'dossier', 'dossier_reference']
+        fields = ["id", "fiche", "dossier", "dossier_reference"]
 
 
 class FicheMouvementSerializer(serializers.ModelSerializer):
     items = FicheMouvementItemSerializer(many=True, read_only=True)
-    agence_nom = serializers.CharField(source='agence.nom', read_only=True)
-    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    agence_nom = serializers.CharField(source="agence.nom", read_only=True)
+    created_by_username = serializers.CharField(
+        source="created_by.username", read_only=True
+    )
 
     # important: rendre 'name' optionnel et tolérer null/blank
-    name = serializers.CharField(required=False, allow_blank=True, allow_null=True, default="")
+    name = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, default=""
+    )
 
     # pour créer les items en une fois
     dossier_ids = serializers.ListField(
@@ -242,7 +316,7 @@ class FicheMouvementSerializer(serializers.ModelSerializer):
     class Meta:
         model = FicheMouvement
         fields = "__all__"
-        read_only_fields = ['created_by', 'created_at']
+        read_only_fields = ["created_by", "created_at"]
         extra_kwargs = {
             "hotel_schedule": {"required": False},
             "aeroport": {"required": False},
@@ -258,13 +332,18 @@ class FicheMouvementSerializer(serializers.ModelSerializer):
                 .values_list("id", flat=True)
             )
             if wrong:
-                raise serializers.ValidationError({"dossier_ids": f"Dossiers d'une autre agence: {wrong}"})
+                raise serializers.ValidationError(
+                    {"dossier_ids": f"Dossiers d'une autre agence: {wrong}"}
+                )
             used = list(
-                FicheMouvementItem.objects.filter(dossier_id__in=dossier_ids)
-                .values_list("dossier_id", flat=True)
+                FicheMouvementItem.objects.filter(
+                    dossier_id__in=dossier_ids
+                ).values_list("dossier_id", flat=True)
             )
             if used:
-                raise serializers.ValidationError({"dossier_ids": f"Déjà utilisés par une fiche: {sorted(set(used))}"})
+                raise serializers.ValidationError(
+                    {"dossier_ids": f"Déjà utilisés par une fiche: {sorted(set(used))}"}
+                )
         # normaliser name (évite “This field may not be null.”)
         if attrs.get("name") is None:
             attrs["name"] = ""
@@ -299,6 +378,7 @@ class FicheMouvementSerializer(serializers.ModelSerializer):
 # Zones & Produits
 # =========================
 
+
 class ZoneSerializer(serializers.ModelSerializer):
     class Meta:
         model = Zone
@@ -314,12 +394,24 @@ class ProduitEtapeSerializer(serializers.ModelSerializer):
 class ProduitTarifSerializer(serializers.ModelSerializer):
     zone = ZoneSerializer(read_only=True)
     zone_id = serializers.PrimaryKeyRelatedField(
-        queryset=Zone.objects.all(), source="zone", write_only=True, required=False, allow_null=True
+        queryset=Zone.objects.all(),
+        source="zone",
+        write_only=True,
+        required=False,
+        allow_null=True,
     )
 
     class Meta:
         model = ProduitTarif
-        fields = ["id", "produit", "agence", "zone", "zone_id", "prix_adulte", "prix_enfant"]
+        fields = [
+            "id",
+            "produit",
+            "agence",
+            "zone",
+            "zone_id",
+            "prix_adulte",
+            "prix_enfant",
+        ]
 
 
 class ProduitSerializer(serializers.ModelSerializer):
@@ -329,25 +421,47 @@ class ProduitSerializer(serializers.ModelSerializer):
     class Meta:
         model = Produit
         fields = [
-            "id", "kind", "agence", "titre", "description", "theme",
-            "heure_debut", "heure_fin", "capacite",
-            "zone_depart", "avec_repas", "duree",
-            "zone_origine", "zone_destination",
-            "created_at", "etapes", "tarifs",
+            "id",
+            "kind",
+            "agence",
+            "titre",
+            "description",
+            "theme",
+            "heure_debut",
+            "heure_fin",
+            "capacite",
+            "zone_depart",
+            "avec_repas",
+            "duree",
+            "zone_origine",
+            "zone_destination",
+            "created_at",
+            "etapes",
+            "tarifs",
         ]
 
 
 class ReservationProduitSerializer(serializers.ModelSerializer):
-    total_ttc = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    total_ttc = serializers.DecimalField(
+        max_digits=12, decimal_places=2, read_only=True
+    )
 
     class Meta:
         model = ReservationProduit
         fields = [
-            "id", "produit", "dossier", "agence",
-            "date_service", "zone_pickup",
-            "nb_adultes", "nb_enfants",
-            "prix_adulte_applique", "prix_enfant_applique",
-            "total_ttc", "mission", "created_at",
+            "id",
+            "produit",
+            "dossier",
+            "agence",
+            "date_service",
+            "zone_pickup",
+            "nb_adultes",
+            "nb_enfants",
+            "prix_adulte_applique",
+            "prix_enfant_applique",
+            "total_ttc",
+            "mission",
+            "created_at",
         ]
 
 
@@ -355,17 +469,32 @@ class ReservationProduitSerializer(serializers.ModelSerializer):
 # Offres inter-agences (Rentout / Rideshare)
 # =========================
 
+
 class VehicleOfferSerializer(serializers.ModelSerializer):
     seats_available = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = VehicleOffer
         fields = [
-            "id", "vehicule", "agence", "mode",
-            "start", "end",
-            "origin_zone", "destination_zone", "origin", "destination",
-            "seats_total", "seats_reserved", "seats_available",
-            "price", "price_per_adult", "price_per_child", "currency",
-            "notes", "is_public", "active", "created_at",
+            "id",
+            "vehicule",
+            "agence",
+            "mode",
+            "start",
+            "end",
+            "origin_zone",
+            "destination_zone",
+            "origin",
+            "destination",
+            "seats_total",
+            "seats_reserved",
+            "seats_available",
+            "price",
+            "price_per_adult",
+            "price_per_child",
+            "currency",
+            "notes",
+            "is_public",
+            "active",
+            "created_at",
         ]
-

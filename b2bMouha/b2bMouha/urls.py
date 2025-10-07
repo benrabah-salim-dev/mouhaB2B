@@ -13,12 +13,14 @@ from b2b.views import (
     PublicResourceSearchAPIView,
     ImporterVehiculesAPIView,
 )
+
 # déjà présent :
 from b2b.views.fiches import (
     FichesMouvementListAPIView,
     FicheMouvementHotelScheduleAPIView,
-    FicheMouvementAssignResourcesAPIView
+    FicheMouvementAssignResourcesAPIView,
 )
+
 # ✅ nouvel import
 from b2b.views.dossiers_import import DossiersImportablesAPIView
 
@@ -31,44 +33,80 @@ router.register(r"missions", views.MissionViewSet, basename="mission")
 router.register(r"ordres-mission", OrdreMissionViewSet, basename="ordremission")
 router.register(r"dossiers", views.DossierViewSet, basename="dossier")
 router.register(r"hotels", views.HotelViewSet, basename="hotel")
-router.register(r"fiches-mouvement", views.FicheMouvementViewSet, basename="fichemouvement")
-router.register(r"fiches-mouvement-items", views.FicheMouvementItemViewSet, basename="fichemouvementitem")
+router.register(
+    r"fiches-mouvement", views.FicheMouvementViewSet, basename="fichemouvement"
+)
+router.register(
+    r"fiches-mouvement-items",
+    views.FicheMouvementItemViewSet,
+    basename="fichemouvementitem",
+)
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-
     # API via ViewSets
     path("api/", include(router.urls)),
-
     # Auth
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("api/login/", LoginView.as_view(), name="login"),
-
     # OM PDF
-    path("api/ordres-mission/<int:ordre_id>/pdf/", ordre_mission_pdf, name="ordre-mission-pdf"),
-
+    path(
+        "api/ordres-mission/<int:ordre_id>/pdf/",
+        ordre_mission_pdf,
+        name="ordre-mission-pdf",
+    ),
     # Imports existants
-    path("api/importer-dossier/", views.ImporterDossierAPIView.as_view(), name="importer_dossier"),
-    path("api/importer-vehicules/", views.ImporterVehiculesAPIView.as_view(), name="importer_vehicules"),
-    path("api/importer-chauffeurs/", views.ImporterChauffeursAPIView.as_view(), name="importer_chauffeurs"),
-
+    path(
+        "api/importer-dossier/",
+        views.ImporterDossierAPIView.as_view(),
+        name="importer_dossier",
+    ),
+    path(
+        "api/importer-vehicules/",
+        views.ImporterVehiculesAPIView.as_view(),
+        name="importer_vehicules",
+    ),
+    path(
+        "api/importer-chauffeurs/",
+        views.ImporterChauffeursAPIView.as_view(),
+        name="importer_chauffeurs",
+    ),
     # Création fiche (N dossiers → 1 fiche)
-    path("api/creer-fiche-mouvement/", CreerFicheMouvementAPIView.as_view(), name="creer_fiche_mouvement"),
-
+    path(
+        "api/creer-fiche-mouvement/",
+        CreerFicheMouvementAPIView.as_view(),
+        name="creer_fiche_mouvement",
+    ),
     # ✅ Liste plate fiches (cache celles déjà transformées en OM)
-    path("api/fiches-mouvement-list/", FichesMouvementListAPIView.as_view(), name="fiches-mouvement-list"),
-
+    path(
+        "api/fiches-mouvement-list/",
+        FichesMouvementListAPIView.as_view(),
+        name="fiches-mouvement-list",
+    ),
     # ✅ Planning hôtel
-    path("api/fiches-mouvement/<int:pk>/hotel-schedule/", FicheMouvementHotelScheduleAPIView.as_view(), name="fiche-hotel-schedule"),
-
+    path(
+        "api/fiches-mouvement/<int:pk>/hotel-schedule/",
+        FicheMouvementHotelScheduleAPIView.as_view(),
+        name="fiche-hotel-schedule",
+    ),
     # ✅ NOUVEL endpoint pour la page d’import : dossiers importables
-    path("api/dossiers-importables/", DossiersImportablesAPIView.as_view(), name="dossiers-importables"),
+    path(
+        "api/dossiers-importables/",
+        DossiersImportablesAPIView.as_view(),
+        name="dossiers-importables",
+    ),
     # Public resources
-    path("api/public/resources/search/", PublicResourceSearchAPIView.as_view(), name="public-resources-search"),
-    path("public/resources/search/", PublicResourceSearchAPIView.as_view(), name="public-resources-search-noapi"),
-    
-    
+    path(
+        "api/public/resources/search/",
+        PublicResourceSearchAPIView.as_view(),
+        name="public-resources-search",
+    ),
+    path(
+        "public/resources/search/",
+        PublicResourceSearchAPIView.as_view(),
+        name="public-resources-search-noapi",
+    ),
     # ✅ **NOUVEAU**: affectation des ressources / génération depuis une fiche
     path(
         "api/fiches-mouvement/<int:pk>/assign-resources/",

@@ -4,134 +4,269 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+
 import difflib
-
 import pandas as pd
-from django.shortcuts import get_object_or_404
-from django.utils import timezone
-from rest_framework.parsers import MultiPartParser
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.response import Response
-from rest_framework.views import APIView
-
-from b2b.models import AgenceVoyage, Dossier, Hotel, Vehicule, Chauffeur
-from .helpers import _ensure_same_agence_or_superadmin
-
-import unicodedata
-from typing import Dict, Any, List, Tuple
-
-from django.shortcuts import get_object_or_404
 from django.db import transaction
-from rest_framework.views import APIView
+from django.shortcuts import get_object_or_404
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
+from openpyxl import load_workbook
 
-from openpyxl import load_workbook  # Assure-toi que openpyxl est bien dans requirements
-from b2b.models import AgenceVoyage, Vehicule
-
+from b2b.models import AgenceVoyage, Dossier, Hotel, Vehicule, Chauffeur
+from b2b.views.helpers import (
+    _ensure_same_agence_or_superadmin,
+    _norm_header,
+    _first_str,
+    _parse_int_cell,
+    _combine_datetime,
+    extract_iata,
+    normalize_flight_no,
+    resolve_airports_and_type,
+)
 
 # ---------------------------------------------------------------------
-# Helpers généraux (normalisation / parsers)
+# Lecture Excel robuste : corrige l'alignement / headers
 # ---------------------------------------------------------------------
 
-def _norm_header(s: str) -> str:
-    if s is None:
-        return ""
-    s = str(s).strip().lower()
-    s = unicodedata.normalize("NFD", s)
-    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-    s = re.sub(r"[^a-z0-9]+", "", s)
-    return s
 
+def smart_read_excel(file_obj, max_header_scan: int = 200) -> pd.DataFrame:
+    """
+    Lecture robuste multi-feuilles :
+    - parcourt chaque feuille jusqu'à trouver un tableau exploitable
+    - détecte la meilleure ligne d'entêtes (scan large)
+    - enlève lignes/colonnes vides, décale si besoin
+    """
+    # --- helpers locaux ---
 
-def _first_str(val: Any) -> Optional[str]:
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return None
-    s = str(val).strip()
-    if s.lower() in {"", "nan", "none", "null", "-"}:
-        return None
-    # 123.0 -> 123
-    if re.fullmatch(r"\d+\.0", s):
-        s = s[:-2]
-    return s or None
+    def _norm(s: Any) -> str:
+        if s is None or (isinstance(s, float) and pd.isna(s)):
+            return ""
+        s = str(s)
+        s = unicodedata.normalize("NFD", s)
+        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+        s = s.lower().strip()
+        s = s.replace("_", " ")
+        s = re.sub(r"\s+", " ", s)
+        return s
 
+    expected_tokens = {
+        "date",
+        "horaire",
+        "horaires",
+        "hora",
+        "provenance",
+        "org",
+        "origen",
+        "destination",
+        "dst",
+        "destino",
+        "d/a",
+        "a/d",
+        "l/s",
+        "ls",
+        "depart/arriver",
+        "type",
+        "mouvement",
+        "n° vol",
+        "n vol",
+        "vuelo",
+        "flight",
+        "vol",
+        "client/ to",
+        "client to",
+        "to",
+        "t.o.",
+        "tour operateur",
+        "tour opérateur",
+        "tour operador",
+        "hotel",
+        "hôtel",
+        "ref",
+        "référence",
+        "reference",
+        "ntra.ref",
+        "ref t.o.",
+        "ref to",
+        "titulaire",
+        "tetulaire",
+        "titular",
+        "name",
+        "holder",
+        "pax",
+        "passengers",
+        "adultes",
+        "adultos",
+        "enfants",
+        "niños",
+        "ninos",
+        "bb/gratuit",
+        "bebe",
+        "bebes",
+        "observation",
+        "observations",
+        "coment",
+        "comentario",
+        "comments",
+    }
 
-def _parse_int_cell(v: Any) -> int:
-    """Retourne un entier >=0 depuis texte/float/None."""
-    if v is None or (isinstance(v, float) and pd.isna(v)):
-        return 0
-    s = str(v).strip()
-    if not s or s.lower() in {"nan", "none", "null", "-"}:
-        return 0
-    m = re.findall(r"\d+", s)
-    if m:
+    def score_header_row(series: pd.Series) -> float:
+        cells = [_norm(v) for v in series.tolist()]
+        if not any(cells):
+            return -1e9
+        non_empty = sum(1 for c in cells if c)
+        if non_empty < 2:
+            return -1e9  # trop vide pour être une ligne d'entêtes
+        score = 0.0
+        for c in cells:
+            if not c:
+                continue
+            # +2 si on trouve un token attendu
+            for tok in expected_tokens:
+                if tok in c:
+                    score += 2.0
+                    break
+            # petit malus si beaucoup de chiffres (éviter une ligne de données)
+            if re.search(r"\d{3,}", c):
+                score -= 0.25
+        # bonus léger au nombre de cellules non vides
+        score += 0.15 * non_empty
+        return score
+
+    def tidy_df(df: pd.DataFrame) -> pd.DataFrame:
+        # drop colonnes totalement vides
+        df = df.dropna(axis=1, how="all")
+        # nommer correctement les colonnes (éviter 'Unnamed' / doublons)
+        fixed_cols, used = [], set()
+        for i, c in enumerate(df.columns):
+            nc = (c if isinstance(c, str) else "") or ""
+            nc = nc.strip()
+            if not nc or re.match(r"^unnamed", nc, re.I):
+                nc = f"col_{i+1}"
+            if nc in used:
+                k, tmp = 2, f"{nc}_2"
+                while tmp in used:
+                    k += 1
+                    tmp = f"{nc}_{k}"
+                nc = tmp
+            used.add(nc)
+            fixed_cols.append(nc)
+        df.columns = fixed_cols
+
+        # supprimer les 1ères colonnes quasi vides (tableau décalé)
+        while df.shape[1] > 0:
+            first_col = df.iloc[:, 0]
+            ratio_nan = first_col.isna().mean()
+            ratio_blank = (first_col.astype(str).str.strip() == "").mean()
+            if max(ratio_nan, ratio_blank) >= 0.95:
+                df = df.iloc[:, 1:]
+            else:
+                break
+
+        # trim cellules objet
+        for c in df.columns:
+            if df[c].dtype == object:
+                df[c] = df[c].apply(lambda x: x.strip() if isinstance(x, str) else x)
+
+        # supprimer lignes totalement vides
+        df = df.dropna(how="all")
+        if df.shape[1] == 0 or df.shape[0] == 0:
+            return pd.DataFrame()
+        return df
+
+    # --- ouverture multi-feuilles ---
+    # On laisse pandas choisir le bon engine; si souci, on retente simple.
+    try:
+        xls = pd.ExcelFile(file_obj)
+        sheet_names = xls.sheet_names or [0]
+    except Exception:
+        # fallback : lecture simple (feuille active)
         try:
-            return max(0, int(m[0]))
+            raw = pd.read_excel(file_obj, header=None, dtype=str)
+            raw = raw.map(lambda x: x.strip() if isinstance(x, str) else x)
+            # détecte entêtes sur ce DataFrame unique
+            limit = min(max_header_scan, len(raw))
+            best, header_idx = -1e9, 0
+            for i in range(limit):
+                s = score_header_row(raw.iloc[i])
+                if s > best:
+                    best, header_idx = s, i
+            headers = raw.iloc[header_idx].tolist()
+            df = raw.iloc[header_idx + 1 :].copy()
+            df.columns = headers
+            return tidy_df(df)
+        except Exception as e:
+            raise ValueError(f"Impossible de lire le fichier Excel: {e}")
+
+    # Parcourt chaque feuille et renvoie la première exploitable
+    for sh in sheet_names:
+        try:
+            raw = xls.parse(sh, header=None, dtype=str)
         except Exception:
-            pass
-    try:
-        return max(0, int(float(s)))
-    except Exception:
-        return 0
+            # si une feuille échoue, on continue sur la suivante
+            continue
+
+        # trim global (pandas 2.x : DataFrame.map remplace applymap)
+        raw = raw.map(lambda x: x.strip() if isinstance(x, str) else x)
+
+        if raw.shape[0] == 0 or raw.shape[1] == 0:
+            continue
+
+        limit = min(max_header_scan, len(raw))
+        best, header_idx = -1e9, 0
+        for i in range(limit):
+            s = score_header_row(raw.iloc[i])
+            if s > best:
+                best, header_idx = s, i
+
+        # si aucun score correct trouvé, on tente fallback = 1ère ligne non vide
+        if best < -1e8:
+            for i in range(min(200, len(raw))):
+                if (
+                    raw.iloc[i]
+                    .astype(str)
+                    .str.strip()
+                    .replace("nan", "")
+                    .astype(bool)
+                    .any()
+                ):
+                    header_idx = i
+                    break
+
+        headers = raw.iloc[header_idx].tolist()
+        df = raw.iloc[header_idx + 1 :].copy()
+        df.columns = headers
+        df = tidy_df(df)
+        if not df.empty:
+            return df
+
+    # si aucune feuille exploitable
+    return pd.DataFrame()
 
 
-def _clean_time_cell(v: Any) -> Optional[str]:
-    if v is None or (isinstance(v, float) and pd.isna(v)):
+def _fuzzy_best_match(
+    keywords: List[str], columns: List[str], min_ratio: float = 0.65
+) -> Optional[str]:
+    """Fallback fuzzy basé sur difflib (après normalisation)."""
+    if not columns:
         return None
-    # Excel fraction-of-day
-    if isinstance(v, (int, float)) and 0 <= float(v) < 1:
-        base = datetime(1899, 12, 30) + timedelta(days=float(v))
-        return base.strftime("%H:%M")
-    s = str(v).strip()
-    if not s:
-        return None
-    s = s.replace(".", ":").replace("h", ":").replace("H", ":")
-    s = re.sub(r"[^\d:]", "", s)
-    m = re.search(r"\b(\d{1,2}):(\d{2})\b", s)
-    if m:
-        hh, mm = int(m.group(1)), int(m.group(2))
-        if 0 <= hh <= 23 and 0 <= mm <= 59:
-            return f"{hh:02d}:{mm:02d}"
-    m = re.search(r"\b(\d{3,4})\b", s)
-    if m:
-        num = m.group(1)
-        if len(num) == 3:
-            hh, mm = int(num[0]), int(num[1:])
-        else:
-            hh, mm = int(num[:2]), int(num[2:])
-        if 0 <= hh <= 23 and 0 <= mm <= 59:
-            return f"{hh:02d}:{mm:02d}"
-    return None
+    cols_norm = {c: _norm_header(c) for c in columns}
+    best_c, best_r = None, 0.0
+    for c, n in cols_norm.items():
+        for k in keywords:
+            r = difflib.SequenceMatcher(a=_norm_header(k), b=n).ratio()
+            if r > best_r:
+                best_c, best_r = c, r
+    return best_c if best_r >= min_ratio else None
 
 
-def _combine_datetime(day_val: Any, time_val: Any) -> Optional[datetime]:
-    if day_val is None or (isinstance(day_val, float) and pd.isna(day_val)):
-        return None
-    try:
-        d = pd.to_datetime(day_val, dayfirst=True, errors="coerce")
-    except Exception:
-        d = pd.NaT
-    if pd.isna(d):
-        return None
-    t_str = _clean_time_cell(time_val)
-    if t_str:
-        dt = pd.to_datetime(f"{d.date().isoformat()} {t_str}", dayfirst=True, errors="coerce")
-    else:
-        dt = pd.to_datetime(d.date(), errors="coerce")
-    if pd.isna(dt):
-        return None
-    py = dt.to_pydatetime()
-    if timezone.is_naive(py):
-        py = timezone.make_aware(py)
-    return py
-
-
-def _find_col(df: pd.DataFrame, *keyword_groups: List[str], prefer: Optional[str] = None) -> Optional[str]:
-    """
-    1) match exact (après normalisation) ; 2) sinon 'contains'
-    """
+def _find_col(
+    df: pd.DataFrame, *keyword_groups: List[str], prefer: Optional[str] = None
+) -> Optional[str]:
+    """1) match exact (normalisé) ; 2) sinon 'contains' ; 3) prefer si présent."""
     norm_map: Dict[str, List[str]] = {}
     for c in df.columns:
         norm_map.setdefault(_norm_header(c), []).append(c)
@@ -150,7 +285,9 @@ def _find_col(df: pd.DataFrame, *keyword_groups: List[str], prefer: Optional[str
     for group in keyword_groups:
         for k in group:
             k_norm = _norm_header(k)
-            candidates = [orig for norm, lst in norm_map.items() if k_norm in norm for orig in lst]
+            candidates = [
+                orig for norm, lst in norm_map.items() if k_norm in norm for orig in lst
+            ]
             if candidates:
                 if prefer and prefer in candidates:
                     return prefer
@@ -158,125 +295,16 @@ def _find_col(df: pd.DataFrame, *keyword_groups: List[str], prefer: Optional[str
     return None
 
 
-def _fuzzy_best_match(keywords: List[str], columns: List[str], min_ratio: float = 0.65) -> Optional[str]:
-    """Fallback fuzzy basé sur difflib (après normalisation)."""
-    if not columns:
-        return None
-    cols_norm = {c: _norm_header(c) for c in columns}
-    best_c, best_r = None, 0.0
-    for c, n in cols_norm.items():
-        for k in keywords:
-            r = difflib.SequenceMatcher(a=_norm_header(k), b=n).ratio()
-            if r > best_r:
-                best_c, best_r = c, r
-    return best_c if best_r >= min_ratio else None
-
-# ---------------------------------------------------------------------
-# Lecture Excel robuste : corrige l'alignement / headers
-# ---------------------------------------------------------------------
-
-def smart_read_excel(file_obj, max_header_scan: int = 10) -> pd.DataFrame:
-    """
-    Lit un Excel 'sale', détecte la meilleure ligne d'entêtes et réaligne.
-    - scanne les premières lignes pour trouver la vraie ligne de titres
-    - supprime colonnes vides et 'Unnamed'
-    - normalise les cellules (trim)
-    """
-    raw = pd.read_excel(file_obj, header=None, dtype=str)
-    raw = raw.applymap(lambda x: x.strip() if isinstance(x, str) else x)
-
-    expected_tokens = [
-        "date", "horaire", "horaires", "hora", "provenance", "org", "origen",
-        "destination", "dst", "destino",
-        "d/a", "a/d", "l/s", "ls", "depart/arriver", "type", "mouvement",
-        "n° vol", "n vol", "vuelo", "flight", "vol",
-        "client/ to", "client to", "to", "t.o.", "tour operateur", "tour opérateur", "tour operador",
-        "hotel", "hôtel",
-        "ref", "référence", "reference", "ntra.ref", "ref t.o.", "ref to",
-        "titulaire", "tetulaire", "titular", "name", "holder",
-        "pax", "passengers", "adultes", "adultos", "enfants", "niños", "ninos", "bb/gratuit", "bebe", "bebes",
-        "observation", "observations", "coment", "comentario", "comments"
-    ]
-
-    def _norm(s: Any) -> str:
-        if s is None or (isinstance(s, float) and pd.isna(s)):
-            return ""
-        s = str(s)
-        s = unicodedata.normalize("NFD", s)
-        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-        s = s.lower().strip()
-        s = s.replace("_", " ")
-        s = re.sub(r"\s+", " ", s)
-        return s
-
-    def score_header_row(series: pd.Series) -> float:
-        cells = [_norm(v) for v in series.tolist()]
-        if not any(cells):
-            return 0.0
-        score = 0.0
-        for c in cells:
-            if c and not re.search(r"\d{4}-\d{2}-\d{2}", c):
-                for tok in expected_tokens:
-                    if tok in c:
-                        score += 2.0
-                if re.search(r"\d{3,}", c):
-                    score -= 0.5
-        score += 0.2 * sum(bool(x) for x in cells)
-        return score
-
-    header_idx = 0
-    best = -1e9
-    limit = min(max_header_scan, min(15, len(raw)))
-    for i in range(limit):
-        s = score_header_row(raw.iloc[i])
-        if s > best:
-            best, header_idx = s, i
-
-    headers = raw.iloc[header_idx].tolist()
-    df = raw.iloc[header_idx + 1 :].copy()
-    df.columns = headers
-    df = df.dropna(axis=1, how="all")
-
-    fixed_cols, used = [], set()
-    for i, c in enumerate(df.columns):
-        nc = c if isinstance(c, str) else ""
-        nc = (nc or "").strip()
-        if not nc or re.match(r"^unnamed", nc, re.I):
-            nc = f"col_{i+1}"
-        if nc in used:
-            k, tmp = 2, f"{nc}_2"
-            while tmp in used:
-                k += 1
-                tmp = f"{nc}_{k}"
-            nc = tmp
-        used.add(nc)
-        fixed_cols.append(nc)
-    df.columns = fixed_cols
-
-    # Drop leading empty columns (décalage)
-    while df.shape[1] > 0:
-        first_col = df.iloc[:, 0]
-        ratio_nan = first_col.isna().mean()
-        ratio_blank = (first_col.astype(str).str.strip() == "").mean()
-        if max(ratio_nan, ratio_blank) >= 0.95:
-            df = df.iloc[:, 1:]
-        else:
-            break
-
-    # Trim cellules
-    for c in df.columns:
-        if df[c].dtype == object:
-            df[c] = df[c].apply(lambda x: x.strip() if isinstance(x, str) else x)
-
-    return df
-
-
 # ---------------------------------------------------------------------
 # Import Dossiers
 # ---------------------------------------------------------------------
+
+
 class ImporterDossierAPIView(APIView):
     parser_classes = [MultiPartParser]
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
+
+    # --------- helpers locaux pour la sélection de colonnes/valeurs ---------
 
     def _find_cols_any(self, df: pd.DataFrame, *keywords: str) -> List[str]:
         want = {_norm_header(k) for k in keywords}
@@ -300,34 +328,43 @@ class ImporterDossierAPIView(APIView):
                 best_col, best_score = col, score
         return best_col
 
-    # --- FIX: Priorité stricte TETULAIRE/TITULAIRE; exclusion des colonnes 'Client TO' / TO
-    def _extract_nom_reservation(self, df: pd.DataFrame, row: pd.Series) -> Optional[str]:
+    def _extract_nom_reservation(
+        self, df: pd.DataFrame, row: pd.Series
+    ) -> Optional[str]:
         cols = list(df.columns)
         norm_map = {c: _norm_header(c) for c in cols}
 
         def _good(col: str) -> bool:
             n = norm_map[col]
-            # Exclure toute colonne liée au TO / tour opérateur
             if re.search(r"\b(to|tour|operat)\b", n):
                 return False
-            # Éviter les champs 'clientto', 'client_to', etc.
             if "client" in n and "to" in n:
                 return False
             return True
 
-        # Groupe 1 (priorité maximale): titulaire/tetulaire/holder/lead/bookingname
         g1_keys = [
-            "titulaire", "tetulaire", "holder", "lead", "leadname", "bookingname", "titular"
+            "titulaire",
+            "tetulaire",
+            "holder",
+            "lead",
+            "leadname",
+            "bookingname",
+            "titular",
         ]
         g1 = [c for c in cols if any(k in norm_map[c] for k in g1_keys) and _good(c)]
 
-        # Groupe 2: champs nom de réservation explicites
         g2_keys = [
-            "nomreservation", "nomresa", "reservation", "groupe", "group", "booking", "passager", "paxnames"
+            "nomreservation",
+            "nomresa",
+            "reservation",
+            "groupe",
+            "group",
+            "booking",
+            "passager",
+            "paxnames",
         ]
         g2 = [c for c in cols if any(k in norm_map[c] for k in g2_keys) and _good(c)]
 
-        # Groupe 3: 'client' générique (mais pas client TO)
         g3 = [c for c in cols if ("client" in norm_map[c]) and _good(c)]
 
         for group in (g1, g2, g3):
@@ -338,20 +375,44 @@ class ImporterDossierAPIView(APIView):
                     if s and s.lower() not in {"nan", "none", "null", "-"}:
                         return s
 
-        # Si pas trouvé: combiner prénom/nom
-        last_name_cols = self._find_cols_any(df, "nom", "lastname", "last_name", "surname", "apellidos")
-        first_name_cols = self._find_cols_any(df, "prenom", "firstname", "first_name", "givenname", "nombre")
-        ln = next((_first_str(row.get(c)) for c in last_name_cols if _first_str(row.get(c))), None)
-        fn = next((_first_str(row.get(c)) for c in first_name_cols if _first_str(row.get(c))), None)
+        last_name_cols = self._find_cols_any(
+            df, "nom", "lastname", "last_name", "surname", "apellidos"
+        )
+        first_name_cols = self._find_cols_any(
+            df, "prenom", "firstname", "first_name", "givenname", "nombre"
+        )
+        ln = next(
+            (_first_str(row.get(c)) for c in last_name_cols if _first_str(row.get(c))),
+            None,
+        )
+        fn = next(
+            (_first_str(row.get(c)) for c in first_name_cols if _first_str(row.get(c))),
+            None,
+        )
         combined = " ".join([fn or "", ln or ""]).strip()
         return combined or None
 
     def _collect_observations(self, df: pd.DataFrame, row: pd.Series) -> str:
         obs_exact_norms = {
-            "observation", "observations", "observatio", "observ", "obs",
-            "remark", "remarks", "remarque", "remarques",
-            "note", "notes", "comment", "comments", "commentaire", "commentaires",
-            "coment", "coments", "comentario", "comentarios"
+            "observation",
+            "observations",
+            "observatio",
+            "observ",
+            "obs",
+            "remark",
+            "remarks",
+            "remarque",
+            "remarques",
+            "note",
+            "notes",
+            "comment",
+            "comments",
+            "commentaire",
+            "commentaires",
+            "coment",
+            "coments",
+            "comentario",
+            "comentarios",
         }
         obs_num_re = re.compile(
             r"^(obs|observ|observation|observations|observatio|remark|remarks|remarque|remarques|"
@@ -396,6 +457,8 @@ class ImporterDossierAPIView(APIView):
                     pieces.append(txt)
         return " | ".join(pieces)
 
+    # ------------------------------- POST ---------------------------------
+
     def post(self, request):
         fichier = request.FILES.get("file")
         agence_id = request.data.get("agence")
@@ -404,9 +467,10 @@ class ImporterDossierAPIView(APIView):
         if not agence_id:
             return Response({"error": "Agence requise."}, status=400)
 
+        _ensure_same_agence_or_superadmin(request, int(agence_id))
         agence = get_object_or_404(AgenceVoyage, id=agence_id)
 
-        # --- lecture Excel robuste (corrige l'alignement) ---
+        # lecture Excel robuste
         try:
             df = smart_read_excel(fichier)
         except Exception as e:
@@ -423,36 +487,109 @@ class ImporterDossierAPIView(APIView):
             return _fuzzy_best_match(keywords, cols, min_ratio=0.65)
 
         # --- mapping colonnes ---
-        col_ref_to   = choose_col(["Ref.T.O.", "Ref TO", "RefTO", "RefTO.", "Ref T.O.", "Ref T O", "Ref_T_O", "Ref.TO"])
+        col_ref_to = choose_col(
+            [
+                "Ref.T.O.",
+                "Ref TO",
+                "RefTO",
+                "RefTO.",
+                "Ref T.O.",
+                "Ref T O",
+                "Ref_T_O",
+                "Ref.TO",
+            ]
+        )
         col_ntra_ref = choose_col(["Ntra.Ref", "NtraRef", "Ntra Ref", "Ntra"])
-        col_ref_alt  = choose_col(["Reference", "Référence", "Ref", "REF", "N° dossier", "N dossier", "N_DOSSIER"])
-        col_ref      = col_ref_to or col_ntra_ref or col_ref_alt
+        col_ref_alt = choose_col(
+            [
+                "Reference",
+                "Référence",
+                "Ref",
+                "REF",
+                "N° dossier",
+                "N dossier",
+                "N_DOSSIER",
+            ]
+        )
+        col_ref = col_ref_to or col_ntra_ref or col_ref_alt
 
-        col_day  = choose_col(["Dia", "DATE", "Date", "Fecha", "Jour", "Data"])
+        col_day = choose_col(["Dia", "DATE", "Date", "Fecha", "Jour", "Data"])
         col_time = choose_col(["Hora", "Horaires", "Horaire", "Heure", "Time", "Horas"])
-        col_vol  = choose_col(["Vuelo", "Vol", "Flight", "N° VOL", "N VOL", "Nº VOL", "N° Vol", "N°Vol", "No Vol"])
+        col_vol = choose_col(
+            [
+                "Vuelo",
+                "Vol",
+                "Flight",
+                "N° VOL",
+                "N VOL",
+                "Nº VOL",
+                "N° Vol",
+                "N°Vol",
+                "No Vol",
+            ]
+        )
 
-        col_org  = choose_col(["Org", "Provenance", "Orig", "From", "Origen"])
-        col_dst  = choose_col(["Dst", "Destination", "To", "Destino"])
+        col_org = choose_col(["Org", "Provenance", "Orig", "From", "Origen"])
+        col_dst = choose_col(["Dst", "Destination", "To", "Destino"])
 
-        col_ls   = choose_col([
-            "L/S", "LS", "D/A", "A/D", "DA", "AD", "Type Mouvement", "Type", "Mouvement",
-            "DEPART/ARRIVER", "DEPART/ARRIVE", "Depart/Arrivee", "DEPART ARRIVEE"
-        ])
+        col_ls = choose_col(
+            [
+                "L/S",
+                "LS",
+                "D/A",
+                "A/D",
+                "DA",
+                "AD",
+                "Type Mouvement",
+                "Type",
+                "Mouvement",
+                "DEPART/ARRIVER",
+                "DEPART/ARRIVE",
+                "Depart/Arrivee",
+                "DEPART ARRIVEE",
+            ]
+        )
 
-        col_city  = choose_col(["Ciudad", "Ville", "City", "Localite", "Localité", "Ciudad/Zone", "Zone"])
-        col_to    = choose_col([
-            "T.O.", "TO", "Client TO", "CLIENT/ TO", "CLIENT TO", "Client/ TO",
-            "Tour Operateur", "Tour Opérateur", "Tour Operador", "Tour Operator"
-        ])
+        col_city = choose_col(
+            ["Ciudad", "Ville", "City", "Localite", "Localité", "Ciudad/Zone", "Zone"]
+        )
+        col_to = choose_col(
+            [
+                "T.O.",
+                "TO",
+                "Client TO",
+                "CLIENT/ TO",
+                "CLIENT TO",
+                "Client/ TO",
+                "Tour Operateur",
+                "Tour Opérateur",
+                "Tour Operador",
+                "Tour Operator",
+            ]
+        )
         col_hotel = self._pick_hotel_col(df)
-        # On garde 'col_name' pour compat: mais _extract_nom_reservation est prioritaire
-        col_name  = choose_col(["Titular", "Titulaire", "TETULAIRE", "Nom", "Name", "Holder", "Client", "Tetulaire"])
+        # compat: si jamais _extract_nom_reservation ne trouve pas
+        col_name = choose_col(
+            [
+                "Titular",
+                "Titulaire",
+                "TETULAIRE",
+                "Nom",
+                "Name",
+                "Holder",
+                "Client",
+                "Tetulaire",
+            ]
+        )
 
-        col_pax   = choose_col(["Pax", "PAX", "Passengers"])
-        adult_cols  = self._find_cols_any(df, "adulte", "adultes", "adults", "adultos")
-        child_cols  = self._find_cols_any(df, "enfant", "enfants", "children", "ninos", "niños", "nenes")
-        baby_cols   = self._find_cols_any(df, "bb", "bebe", "bebes", "bb/gratuit", "infant", "baby", "bebesgratuit")
+        col_pax = choose_col(["Pax", "PAX", "Passengers"])
+        adult_cols = self._find_cols_any(df, "adulte", "adultes", "adults", "adultos")
+        child_cols = self._find_cols_any(
+            df, "enfant", "enfants", "children", "ninos", "niños", "nenes"
+        )
+        baby_cols = self._find_cols_any(
+            df, "bb", "bebe", "bebes", "bb/gratuit", "infant", "baby", "bebesgratuit"
+        )
 
         dossiers_crees: List[str] = []
         dossiers_mis_a_jour: List[str] = []
@@ -463,46 +600,36 @@ class ImporterDossierAPIView(APIView):
         for idx, row in df.iterrows():
             # Référence obligatoire
             ref = None
-            if col_ref:
-                ref = _first_str(row.get(col_ref))
-            if (not ref) and col_ref_to:
-                ref = _first_str(row.get(col_ref_to))
-            if (not ref) and col_ntra_ref:
-                ref = _first_str(row.get(col_ntra_ref))
-            if (not ref) and col_ref_alt:
-                ref = _first_str(row.get(col_ref_alt))
+            for c in [col_ref, col_ref_to, col_ntra_ref, col_ref_alt]:
+                if c and not ref:
+                    ref = _first_str(row.get(c))
             if not ref:
-                lignes_ignorees.append({"ligne": idx + 2, "raison": "Référence manquante"})
+                lignes_ignorees.append(
+                    {"ligne": idx + 2, "raison": "Référence manquante"}
+                )
                 continue
+            ref = ref.strip()
 
             # Datetime combiné
-            day_val  = row.get(col_day)  if col_day  else None
+            day_val = row.get(col_day) if col_day else None
             time_val = row.get(col_time) if col_time else None
             dt = _combine_datetime(day_val, time_val)
 
-            # Orig/Dest + type A/D
-            org = _first_str(row.get(col_org)) if col_org else ""
-            dst = _first_str(row.get(col_dst)) if col_dst else ""
-            type_hint = (_first_str(row.get(col_ls)) or "").upper() if col_ls else ""
-            type_hint = (type_hint
-                         .replace("ARRIVER", "ARRIVEE")
-                         .replace("ARRIVE", "ARRIVEE")
-                         .replace("ARRIVAL", "ARRIVEE")
-                         .replace("DEPARTURE", "DEPART")
-                         .replace("SALIDA", "DEPART"))
-            if type_hint in {"L", "A", "ARRIVEE"}:
-                type_code = "A"
-            elif type_hint in {"S", "D", "DEPART"}:
-                type_code = "D"
-            else:
-                type_code = None
+            # Orig/Dest + type A/D (résolution fiable)
+            org_val = row.get(col_org) if col_org else None
+            dst_val = row.get(col_dst) if col_dst else None
+            da_val = row.get(col_ls) if col_ls else None
+
+            org_iata, dst_iata, type_code, errs = resolve_airports_and_type(
+                org_val, dst_val, da_val
+            )
 
             # Vol, Ville, TO
-            vol   = _first_str(row.get(col_vol)) if col_vol else ""
+            vol = normalize_flight_no(row.get(col_vol)) if col_vol else ""
             ville = _first_str(row.get(col_city)) if col_city else ""
-            tour_op  = _first_str(row.get(col_to)) if col_to else ""
+            tour_op = _first_str(row.get(col_to)) if col_to else ""
 
-            # PAX principal
+            # PAX
             pax_raw = _first_str(row.get(col_pax)) if col_pax else None
             try:
                 pax = int(float(pax_raw)) if pax_raw is not None else 0
@@ -514,12 +641,12 @@ class ImporterDossierAPIView(APIView):
                 bb = sum(_parse_int_cell(row.get(c)) for c in baby_cols)
                 pax = max(pax, ad + ch + bb)
 
-            # Titulaire / nom de réservation robuste (PRIORITÉ g1 -> g2 -> g3)
+            # Titulaire / nom de réservation
             nom_resa = self._extract_nom_reservation(df, row)
             if not nom_resa and col_name:
                 nom_resa = _first_str(row.get(col_name)) or ""
 
-            # Hôtel
+            # Hôtel (création si inconnu)
             hotel_nom = _first_str(row.get(col_hotel)) if col_hotel else None
             hotel_obj = None
             if hotel_nom:
@@ -527,16 +654,18 @@ class ImporterDossierAPIView(APIView):
                 if not hotel_obj:
                     hotel_obj = Hotel.objects.create(nom=hotel_nom)
 
-            # Répartition arrivée/départ
+            # Répartition arrivée/départ + numéros de vol
             heure_arrivee = heure_depart = None
             num_vol_arrivee = num_vol_retour = ""
+
             if type_code == "A":
                 heure_arrivee, num_vol_arrivee = dt, (vol or "")
             elif type_code == "D":
                 heure_depart, num_vol_retour = dt, (vol or "")
             else:
-                # Heuristique si non renseigné: si ORG rempli, on suppose départ; sinon arrivée
-                if org and not dst:
+                # fallback si D/A indéterminé: on se base sur LOCAL_IATA via resolve_airports_and_type
+                # si toujours None, on affecte à l'arrivée par défaut (plus courant en DMC)
+                if org_iata and not dst_iata:
                     heure_depart, num_vol_retour = dt, (vol or "")
                 else:
                     heure_arrivee, num_vol_arrivee = dt, (vol or "")
@@ -546,10 +675,10 @@ class ImporterDossierAPIView(APIView):
             data = {
                 "agence": agence,
                 "ville": ville or "",
-                "aeroport_arrivee": (dst or "Aucun"),
+                "aeroport_arrivee": (dst_iata or _first_str(dst_val) or "Aucun"),
                 "num_vol_arrivee": num_vol_arrivee or "",
                 "heure_arrivee": heure_arrivee,
-                "aeroport_depart": org or "",
+                "aeroport_depart": (org_iata or _first_str(org_val) or ""),
                 "heure_depart": heure_depart,
                 "num_vol_retour": num_vol_retour or "",
                 "hotel": hotel_obj,
@@ -560,28 +689,38 @@ class ImporterDossierAPIView(APIView):
                 "observation": obs_joined or "",
             }
 
-            obj, created = Dossier.objects.update_or_create(reference=ref, defaults=data)
+            # journalise erreurs de cohérence éventuelles (sans bloquer l'upsert)
+            if errs:
+                data["observation"] = (
+                    data["observation"] + " | " if data["observation"] else ""
+                ) + "; ".join(errs)
+
+            obj, created = Dossier.objects.update_or_create(
+                reference=ref, defaults=data
+            )
             (dossiers_crees if created else dossiers_mis_a_jour).append(ref)
 
-            ui_rows.append({
-                "id": obj.id,
-                "reference": obj.reference,
-                "ville": obj.ville,
-                "hotel": getattr(obj.hotel, "nom", None),
-                "aeroport_arrivee": obj.aeroport_arrivee,
-                "num_vol_arrivee": obj.num_vol_arrivee,
-                "heure_arrivee": obj.heure_arrivee,
-                "aeroport_depart": obj.aeroport_depart,
-                "heure_depart": obj.heure_depart,
-                "num_vol_retour": obj.num_vol_retour,
-                "nombre_personnes_arrivee": obj.nombre_personnes_arrivee,
-                "nombre_personnes_retour": obj.nombre_personnes_retour,
-                "tour_operateur": obj.tour_operateur or "",
-                "_to": obj.tour_operateur or "",
-                "nom_reservation": obj.nom_reservation or "",
-                "clients": obj.nom_reservation or "",
-                "observation": obj.observation or "",
-            })
+            ui_rows.append(
+                {
+                    "id": obj.id,
+                    "reference": obj.reference,
+                    "ville": obj.ville,
+                    "hotel": getattr(obj.hotel, "nom", None),
+                    "aeroport_arrivee": obj.aeroport_arrivee,
+                    "num_vol_arrivee": obj.num_vol_arrivee,
+                    "heure_arrivee": obj.heure_arrivee,
+                    "aeroport_depart": obj.aeroport_depart,
+                    "heure_depart": obj.heure_depart,
+                    "num_vol_retour": obj.num_vol_retour,
+                    "nombre_personnes_arrivee": obj.nombre_personnes_arrivee,
+                    "nombre_personnes_retour": obj.nombre_personnes_retour,
+                    "tour_operateur": obj.tour_operateur or "",
+                    "_to": obj.tour_operateur or "",
+                    "nom_reservation": obj.nom_reservation or "",
+                    "clients": obj.nom_reservation or "",
+                    "observation": obj.observation or "",
+                }
+            )
 
         return Response(
             {
@@ -598,7 +737,6 @@ class ImporterDossierAPIView(APIView):
 # ---------------------------------------------------------------------
 # Import Véhicules
 # ---------------------------------------------------------------------
-# b2b/views/importers.py  — remplacement de la classe ImporterVehiculesAPIView
 
 
 def _norm(s: Any) -> str:
@@ -610,42 +748,50 @@ def _norm(s: Any) -> str:
     s = "".join(c for c in s if not unicodedata.combining(c))
     out = []
     for ch in s:
-        if ch.isalnum():
-            out.append(ch)
-        else:
-            out.append("_")
+        out.append(ch if ch.isalnum() else "_")
     return "".join(out).strip("_").upper()
 
-# Dictionnaire de synonymes acceptés
+
 HEADER_ALIASES: Dict[str, List[str]] = {
-    "IMMATRICULATION": ["IMMATRICULATION", "IMMAT", "PLAQUE", "MATRICULE", "REG", "REG_NO", "REGISTRATION", "NUM_IMMATRICULATION"],
+    "IMMATRICULATION": [
+        "IMMATRICULATION",
+        "IMMAT",
+        "PLAQUE",
+        "MATRICULE",
+        "REG",
+        "REG_NO",
+        "REGISTRATION",
+        "NUM_IMMATRICULATION",
+    ],
     "MARQUE": ["MARQUE", "BRAND", "MAKE"],
     "MODELE": ["MODELE", "MODEL", "MODELE_", "MODElE", "MODÈLE"],
     "TYPE": ["TYPE", "CATEGORIE", "CATEGORY", "VEHICLE_TYPE"],
-    "CAPACITE": ["CAPACITEE","CAPACITE", "CAPACITE_", "CAPACITY", "SEATS", "NB_PLACES", "PLACES"],
+    "CAPACITE": [
+        "CAPACITEE",
+        "CAPACITE",
+        "CAPACITE_",
+        "CAPACITY",
+        "SEATS",
+        "NB_PLACES",
+        "PLACES",
+    ],
     "ANNEE": ["ANNEE", "ANNEE_", "YEAR"],
 }
 
-# Colonnes minimales requises
 REQUIRED_KEYS = ["IMMATRICULATION", "MARQUE", "MODELE"]
 
-def _build_header_map(header_cells: List[Any]) -> Dict[str, int]:
-    """
-    Retourne un mapping logique -> index colonne à partir des libellés réels.
-    Ex: {"IMMATRICULATION": 0, "MARQUE": 1, ...}
-    """
-    # Normalise les en-têtes présents dans le fichier
-    present = { _norm(v): idx for idx, v in enumerate(header_cells) if _norm(v) }
-    mapping: Dict[str, int] = {}
 
+def _build_header_map(header_cells: List[Any]) -> Dict[str, int]:
+    present = {_norm(v): idx for idx, v in enumerate(header_cells) if _norm(v)}
+    mapping: Dict[str, int] = {}
     for logical, aliases in HEADER_ALIASES.items():
         for alias in aliases:
             norm_alias = _norm(alias)
             if norm_alias in present:
                 mapping[logical] = present[norm_alias]
                 break
-
     return mapping
+
 
 def _cell_val(cell) -> Any:
     if cell is None:
@@ -654,6 +800,7 @@ def _cell_val(cell) -> Any:
     if isinstance(v, str):
         return v.strip()
     return v
+
 
 class ImporterVehiculesAPIView(APIView):
     """
@@ -668,6 +815,7 @@ class ImporterVehiculesAPIView(APIView):
         "lignes_ignorees": [{"ligne": N, "raison": "..."}]
       }
     """
+
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -679,6 +827,7 @@ class ImporterVehiculesAPIView(APIView):
         if not agence_id:
             return Response({"error": "Paramètre 'agence' requis."}, status=400)
 
+        _ensure_same_agence_or_superadmin(request, int(agence_id))
         agence = get_object_or_404(AgenceVoyage, id=agence_id)
 
         try:
@@ -703,19 +852,23 @@ class ImporterVehiculesAPIView(APIView):
         # Vérifie requis
         missing = [k for k in REQUIRED_KEYS if k not in header_map]
         if missing:
-            # message clair avec ce qu'on a détecté comme colonnes
-            detected = ", ".join([f"{k}→col{header_map[k]+1}" for k in header_map.keys()])
+            detected = ", ".join(
+                [f"{k}→col{header_map[k]+1}" for k in header_map.keys()]
+            )
             return Response(
-                {"error": f"Colonnes manquantes dans le fichier: {', '.join(missing)}",
-                 "detected": detected},
-                status=400
+                {
+                    "error": f"Colonnes manquantes dans le fichier: {', '.join(missing)}",
+                    "detected": detected,
+                },
+                status=400,
             )
 
         created, updated, ignored = [], [], []
 
         # Parcourt les lignes de données
         for row_idx in range(header_row_idx + 1, ws.max_row + 1):
-            row = [ _cell_val(c) for c in ws[row_idx] ]
+            row = [_cell_val(c) for c in ws[row_idx]]
+
             def colv(key, default=None):
                 idx = header_map.get(key)
                 if idx is None or idx >= len(row):
@@ -743,52 +896,69 @@ class ImporterVehiculesAPIView(APIView):
                 ignored.append({"ligne": row_idx, "raison": "MARQUE/MODELE manquant"})
                 continue
 
-            # upsert par immatriculation + agence
             obj, was_created = Vehicule.objects.get_or_create(
                 immatriculation=immat,
                 defaults={
-                    "type": type_ if type_ in dict(Vehicule.TYPE_CHOICES) else "minibus",
-                    "marque": marque, "model": modele, "capacite": capacite,
-                    "annee": annee or 0, "agence": agence,
-                }
+                    "type": (
+                        type_ if type_ in dict(Vehicule.TYPE_CHOICES) else "minibus"
+                    ),
+                    "marque": marque,
+                    "model": modele,
+                    "capacite": capacite,
+                    "annee": annee or 0,
+                    "agence": agence,
+                },
             )
             if not was_created:
-                # update si champ utile a changé
                 changed = False
                 if obj.agence_id != agence.id:
-                    # même immat mais attribuée à une autre agence: ignorer/consigner
-                    ignored.append({"ligne": row_idx, "raison": f"Immat déjà utilisée par une autre agence ({obj.agence_id})."})
+                    ignored.append(
+                        {
+                            "ligne": row_idx,
+                            "raison": f"Immat déjà utilisée par une autre agence ({obj.agence_id}).",
+                        }
+                    )
                     continue
                 if marque and obj.marque != marque:
-                    obj.marque = marque; changed = True
+                    obj.marque = marque
+                    changed = True
                 if modele and obj.model != modele:
-                    obj.model = modele; changed = True
+                    obj.model = modele
+                    changed = True
                 if type_ and type_ in dict(Vehicule.TYPE_CHOICES) and obj.type != type_:
-                    obj.type = type_; changed = True
+                    obj.type = type_
+                    changed = True
                 if capacite and obj.capacite != capacite:
-                    obj.capacite = capacite; changed = True
+                    obj.capacite = capacite
+                    changed = True
                 if annee and obj.annee != annee:
-                    obj.annee = annee; changed = True
+                    obj.annee = annee
+                    changed = True
                 if changed:
                     obj.save()
-                    updated.append({"id": obj.id, "immatriculation": obj.immatriculation})
+                    updated.append(
+                        {"id": obj.id, "immatriculation": obj.immatriculation}
+                    )
                 else:
-                    # ni créé ni modifié → ignoré soft
                     ignored.append({"ligne": row_idx, "raison": "Aucune modification."})
             else:
                 created.append({"id": obj.id, "immatriculation": obj.immatriculation})
 
-        return Response({
-            "vehicules_crees": created,
-            "vehicules_mis_a_jour": updated,
-            "lignes_ignorees": ignored,
-        }, status=200)
-
+        return Response(
+            {
+                "vehicules_crees": created,
+                "vehicules_mis_a_jour": updated,
+                "lignes_ignorees": ignored,
+            },
+            status=200,
+        )
 
 
 # ---------------------------------------------------------------------
 # Import Chauffeurs
 # ---------------------------------------------------------------------
+
+
 class ImporterChauffeursAPIView(APIView):
     parser_classes = [MultiPartParser]
     permission_classes = [IsAuthenticated]
@@ -830,9 +1000,9 @@ class ImporterChauffeursAPIView(APIView):
         except Exception as e:
             return Response({"error": f"Erreur lecture fichier Excel: {e}"}, status=400)
 
-        col_nom = self._find_col(df, self.HEADERS["nom"]) 
-        col_prenom = self._find_col(df, self.HEADERS["prenom"]) 
-        col_cin = self._find_col(df, self.HEADERS["cin"]) 
+        col_nom = self._find_col(df, self.HEADERS["nom"])
+        col_prenom = self._find_col(df, self.HEADERS["prenom"])
+        col_cin = self._find_col(df, self.HEADERS["cin"])
 
         if not col_nom:
             return Response({"error": "Colonne NOM manquante."}, status=400)
@@ -851,7 +1021,12 @@ class ImporterChauffeursAPIView(APIView):
                 agence=agence,
                 nom=nom,
                 prenom=prenom or "",
-                defaults={"cin": cin or "", "agence": agence, "nom": nom, "prenom": prenom or ""},
+                defaults={
+                    "cin": cin or "",
+                    "agence": agence,
+                    "nom": nom,
+                    "prenom": prenom or "",
+                },
             )
             (created if was_created else updated).append(f"{nom} {prenom}".strip())
 

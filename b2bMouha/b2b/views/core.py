@@ -258,15 +258,7 @@ class MissionViewSet(viewsets.ModelViewSet):
 # Ordre de Mission
 # -----------------------------
 class OrdreMissionViewSet(viewsets.ModelViewSet):
-    queryset = (
-        OrdreMission.objects.select_related(
-            "mission",
-            "mission__premission",
-            "mission__premission__agence",
-            "vehicule",
-            "chauffeur",
-        ).all()
-    )
+    queryset = OrdreMission.objects.all()
     serializer_class = OrdreMissionSerializer
     permission_classes = [IsAuthenticated]
 

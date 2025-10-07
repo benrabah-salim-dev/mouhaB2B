@@ -1,5 +1,4 @@
-// src/components/FicheMouvement/FicheMouvement.js
-import React from "react";
+import React, { useEffect, useMemo } from "react";
 import "./ficheMouvement.css";
 import { useFicheMouvement } from "./useFicheMouvement";
 import { Section, Chip, TopSummaryBar } from "./ui";
@@ -8,65 +7,269 @@ import { Link } from "react-router-dom";
 export default function FicheMouvement() {
   const vm = useFicheMouvement();
 
-  // ⬇️ Toujours destructurer AVANT d'utiliser les valeurs
   const {
-    currentAgenceId, navigate,
-    msg, creating, movementName, setMovementName,
-    selectedLanguage, setSelectedLanguage, languages, loading,
+    currentAgenceId,
+    navigate,
+    msg,
+    creating,
+    movementName,
+    setMovementName,
+    selectedLanguage,
+    setSelectedLanguage,
+    languages,
+    loading,
 
     // filters & options
-    typeSel, setTypeSel,
-    dateSel, setDateSel,
-    airportSel, setAirportSel,
-    flightsSel, setFlightsSel,
-    tosSel, setTosSel,
-    villesSel, setVillesSel,
-    hotelsSel, setHotelsSel,
+    typeSel,
+    setTypeSel,
+    dateSel,
+    setDateSel,
+    airportSel,
+    setAirportSel,
+    flightsSel,
+    setFlightsSel,
+    tosSel,
+    setTosSel,
+    villesSel,
+    setVillesSel,
+    hotelsSel,
+    setHotelsSel,
 
-    dateOptions, airportOptions, flightOptions, toOptions, villeOptions, hotelOptions,
+    dateOptions,
+    airportOptions,
+    flightOptions,
+    toOptions,
+    villeOptions,
+    hotelOptions,
 
     // derived
-    tCode, selectedCount, selectedPax, obsCount,
+    tCode,
+    selectedCount,
+    selectedPax,
+    obsCount,
 
     // data & selection
-    groupedByHotel, selectedDossierIds, setSelectedDossierIds,
+    groupedByHotel,
+    selectedDossierIds,
+    setSelectedDossierIds,
 
     // actions
-    onFile, clearImport, onCreate,
+    onFile,
+    clearImport,
+    onCreate,
 
     // utils
-    getPaxDisplay, rowKeyOf,
+    getPaxDisplay,
+    rowKeyOf,
   } = vm;
 
-  // ⬇️ Gating après la destructuration (sinon erreur de portée)
-  const canShowDate     = !!typeSel && dateOptions.length > 0;
-  const canShowAirport  = canShowDate && !!dateSel && airportOptions.length > 0;
-  const canShowFlights  = canShowAirport && !!airportSel && flightOptions.length > 0;
-  const canShowTO       = canShowFlights && flightsSel.length > 0 && toOptions.length > 0;
-  const canShowVilles   = canShowTO && tosSel.length > 0 && villeOptions.length > 0;
-  const canShowHotels   = canShowVilles && (villesSel.length > 0 || hotelOptions.length > 0);
-  const canShowPassengers = !!tCode && !!dateSel && !!airportSel && flightsSel.length > 0;
+  const canShowDate = !!typeSel && dateOptions.length > 0;
+  const canShowAirport = canShowDate && !!dateSel && airportOptions.length > 0;
+  const canShowFlights =
+    canShowAirport && !!airportSel && flightOptions.length > 0;
+  const showRightPane = !!dateSel && !!airportSel && flightsSel.length > 0;
+
+  const resetDownstream = () => {
+    setDateSel("");
+    setAirportSel("");
+    setFlightsSel([]);
+    setTosSel([]);
+    setVillesSel([]);
+    setHotelsSel([]);
+    setSelectedDossierIds(new Set());
+  };
+
+  // Helpers d’affichage (supporte string | object)
+  const getDateLabel = (opt) =>
+    typeof opt === "string"
+      ? opt
+      : opt?.label || opt?.value || opt?.date || "—";
+  const getDateCount = (opt) =>
+    typeof opt === "object"
+      ? opt.count ?? opt.total ?? opt.nb ?? opt.pax
+      : undefined;
+
+  const getAirportLabel = (opt) =>
+    typeof opt === "string"
+      ? opt
+      : opt?.label || opt?.value || opt?.airport || "—";
+  const getAirportCount = (opt) =>
+    typeof opt === "object"
+      ? opt.count ?? opt.total ?? opt.nb ?? opt.pax
+      : undefined;
+
+  const isAirportActive = (opt) => airportSel === getAirportLabel(opt);
+  const isDateActive = (opt) => dateSel === getDateLabel(opt);
+
+  const onSelectDate = (opt) => {
+    const label = getDateLabel(opt);
+    setDateSel(label);
+    setAirportSel("");
+    setFlightsSel([]);
+    setTosSel([]);
+    setVillesSel([]);
+    setHotelsSel([]);
+    setSelectedDossierIds(new Set());
+  };
+
+  const onToggleAirport = (opt) => {
+    const label = getAirportLabel(opt);
+    const next = airportSel === label ? "" : label;
+    setAirportSel(next);
+    setFlightsSel([]);
+    setTosSel([]);
+    setVillesSel([]);
+    setHotelsSel([]);
+    setSelectedDossierIds(new Set());
+  };
+
+  const onToggleFlight = (f) => {
+    setFlightsSel((prev) =>
+      prev.includes(f.flight)
+        ? prev.filter((x) => x !== f.flight)
+        : [...prev, f.flight]
+    );
+    setSelectedDossierIds(new Set());
+  };
+
+  /* ======= NOUVEAU : handlers Select ======= */
+  const onDateChange = (e) => {
+    const val = e.target.value || "";
+    if (!val) {
+      resetDownstream();
+      return;
+    }
+    onSelectDate(val);
+  };
+
+  const onAirportChange = (e) => {
+    const val = e.target.value || "";
+    if (!val) {
+      setAirportSel("");
+      setFlightsSel([]);
+      setTosSel([]);
+      setVillesSel([]);
+      setHotelsSel([]);
+      setSelectedDossierIds(new Set());
+      return;
+    }
+    onToggleAirport(val);
+  };
+
+  const onFlightsChange = (e) => {
+    const values = Array.from(e.target.selectedOptions).map((o) => o.value);
+    setFlightsSel(values);
+    setSelectedDossierIds(new Set());
+  };
+
+  /* ==================== Tableau présélectionné (pane droite) ==================== */
+
+  // helpers pour extraire la clé d'un item (string | object)
+  const toKey = (o) =>
+    typeof o === "string" ? o : o?.to ?? o?.label ?? o?.value ?? "";
+  const villeKey = (o) =>
+    typeof o === "string" ? o : o?.ville ?? o?.label ?? o?.value ?? "";
+  const hotelKey = (o) =>
+    typeof o === "string" ? o : o?.hotel ?? o?.label ?? o?.value ?? "";
+
+  // pré-sélectionner tout quand le panneau droit devient visible
+  useEffect(() => {
+    if (!showRightPane) return;
+    if (!tosSel.length && toOptions.length) setTosSel(toOptions.map(toKey));
+    if (!villesSel.length && villeOptions.length)
+      setVillesSel(villeOptions.map(villeKey));
+    if (!hotelsSel.length && hotelOptions.length)
+      setHotelsSel(hotelOptions.map(hotelKey));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showRightPane, toOptions, villeOptions, hotelOptions]);
+
+  // "tout sélectionné ?" par colonne
+  const allTOSelected = useMemo(
+    () => toOptions.length > 0 && tosSel.length === toOptions.length,
+    [toOptions, tosSel]
+  );
+  const allVillesSelected = useMemo(
+    () => villeOptions.length > 0 && villesSel.length === villeOptions.length,
+    [villeOptions, villesSel]
+  );
+  const allHotelsSelected = useMemo(
+    () => hotelOptions.length > 0 && hotelsSel.length === hotelOptions.length,
+    [hotelOptions, hotelsSel]
+  );
+
+  // toggles master
+  const setAllTO = (checked) => setTosSel(checked ? toOptions.map(toKey) : []);
+  const setAllVilles = (checked) =>
+    setVillesSel(checked ? villeOptions.map(villeKey) : []);
+  const setAllHotels = (checked) =>
+    setHotelsSel(checked ? hotelOptions.map(hotelKey) : []);
+
+  // toggles unitaires
+  const toggleOneTO = (key, checked) =>
+    setTosSel((prev) =>
+      checked ? [...new Set([...prev, key])] : prev.filter((k) => k !== key)
+    );
+  const toggleOneVille = (key, checked) =>
+    setVillesSel((prev) =>
+      checked ? [...new Set([...prev, key])] : prev.filter((k) => k !== key)
+    );
+  const toggleOneHotel = (key, checked) =>
+    setHotelsSel((prev) =>
+      checked ? [...new Set([...prev, key])] : prev.filter((k) => k !== key)
+    );
 
   return (
     <div className="fm-page">
       <div className="fm-wrap">
         <header className="fm-top sticky">
+          {/* LEFT: Titre puis Type */}
           <div className="fm-top-left">
-            <h2>Fiche de mouvement</h2>
+            <h2 className="fm-title m-0">Fiche de mouvement</h2>
+
+            <div className="fm-type-inline">
+              <Chip
+                active={typeSel === "arrivee"}
+                onClick={() => {
+                  setTypeSel("arrivee");
+                  resetDownstream();
+                }}
+                title="Créer/paramétrer une fiche d'Arrivée"
+              >
+                Arrivées
+              </Chip>
+              <Chip
+                active={typeSel === "depart"}
+                onClick={() => {
+                  setTypeSel("depart");
+                  resetDownstream();
+                }}
+                title="Créer/paramétrer une fiche de Départ"
+              >
+                Départs
+              </Chip>
+            </div>
+
             {msg ? <div className="fm-msg">{msg}</div> : null}
           </div>
 
+          {/* RIGHT: actions */}
           <div className="fm-actions">
             {currentAgenceId ? (
-              <Link className="btn btn-outline-secondary btn-sm" to={`/agence/${currentAgenceId}/dashboard`}>
+              <Link
+                className="btn btn-outline-secondary btn-sm"
+                to={`/agence/${currentAgenceId}/dashboard`}
+              >
                 ← Dashboard
               </Link>
             ) : null}
+
             <button
               type="button"
               className="btn btn-outline-primary btn-sm"
               onClick={() =>
-                currentAgenceId ? navigate(`/agence/${currentAgenceId}/fiches-mouvement`) : navigate("/fiches-mouvement")
+                currentAgenceId
+                  ? navigate(`/agence/${currentAgenceId}/fiches-mouvement`)
+                  : navigate("/fiches-mouvement")
               }
             >
               ↪ Fiches
@@ -94,286 +297,328 @@ export default function FicheMouvement() {
 
             <label className="btn btn-dark btn-sm m-0">
               Importer Excel
-              <input type="file" accept=".xls,.xlsx" onChange={onFile} hidden disabled={loading} />
+              <input
+                type="file"
+                accept=".xls,.xlsx"
+                onChange={onFile}
+                hidden
+                disabled={loading}
+              />
             </label>
 
-            <button type="button" className="btn btn-outline-danger btn-sm" onClick={clearImport}>
+            <button
+              type="button"
+              className="btn btn-outline-danger btn-sm"
+              onClick={clearImport}
+            >
               🧹 Vider
             </button>
           </div>
         </header>
 
         {/* Résumé */}
-        <TopSummaryBar
-          tCode={tCode}
-          dateSel={dateSel}
-          airportSel={airportSel}
-          flightsSel={flightsSel}
-          tosSel={tosSel}
-          villesSel={villesSel}
-          hotelsSel={hotelsSel}
-          selectedCount={selectedCount}
-          selectedPax={selectedPax}
-          movementName={movementName}
-          setMovementName={setMovementName}
-          onCreate={onCreate}
-          creating={creating}
-          obsCount={obsCount}
-        />
 
-        <div className="fm-body onecol">
-          {/* TYPE */}
-          <Section title="Type">
-            <div className="fm-row chips">
-              <Chip
-                active={typeSel === "arrivee"}
-                onClick={() => {
-                  setTypeSel("arrivee");
-                  setDateSel(""); setAirportSel("");
-                  setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
-                  setSelectedDossierIds(new Set());
-                }}
-              >
-                Arrivées
-              </Chip>
-              <Chip
-                active={typeSel === "depart"}
-                onClick={() => {
-                  setTypeSel("depart");
-                  setDateSel(""); setAirportSel("");
-                  setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
-                  setSelectedDossierIds(new Set());
-                }}
-              >
-                Départs
-              </Chip>
-            </div>
-          </Section>
+        {/* ====== BODY: 2 colonnes ====== */}
+        <div className="fm-body twocol">
+          {/* ===== Colonne gauche : Date / Aéroport / Vols ===== */}
+          <div className="fm-col-left">
+            {/* DATE => Select compact */}
+            {canShowDate && (
+              <Section title="">
+                <div className="d-flex gap-2 align-items-center">
+                  <select
+                    className="form-select form-select-sm"
+                    value={dateSel}
+                    onChange={onDateChange}
+                    title="Choisir une date"
+                  >
+                    <option value="">DATE</option>
+                    {dateOptions.map((d) => {
+                      const label = getDateLabel(d);
+                      const count = getDateCount(d);
+                      return (
+                        <option key={label} value={label}>
+                          {typeof count === "number" ? `${count} • ` : ""}
+                          {label}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              </Section>
+            )}
 
-          {/* DATE */}
-          {canShowDate && (
+            {/* AÉROPORT => Select compact */}
+            {canShowAirport && (
+              <Section
+                title={
+                  typeSel === "depart"
+                    ? "Aéroport de départ"
+                    : "Aéroport d’arrivée"
+                }
+              >
+                <div className="d-flex gap-2 align-items-center">
+                  <select
+                    className="form-select form-select-sm"
+                    value={airportSel}
+                    onChange={onAirportChange}
+                    title="Choisir un aéroport"
+                  >
+                    <option value="">— Sélectionner —</option>
+                    {airportOptions.map((a) => {
+                      const label = getAirportLabel(a);
+                      const count = getAirportCount(a);
+                      return (
+                        <option key={label} value={label}>
+                          {typeof count === "number" ? `${count} • ` : ""}
+                          {label}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              </Section>
+            )}
+
+            {/* VOLS => Multi-select compact (sans scroll) */}
+            {canShowFlights && (
+              <Section title="Vols (multi-sélection)">
+                <select
+                  multiple
+                  size={Math.min(6, Math.max(3, flightOptions.length))}
+                  className="form-select form-select-sm"
+                  value={flightsSel}
+                  onChange={onFlightsChange}
+                  title="Sélectionner un ou plusieurs vols"
+                  style={{ maxHeight: "12rem" }}
+                >
+                  {flightOptions.map((f) => {
+                    const labelParts = [
+                      f.flight || "—",
+                      f.times?.length ? f.times.join(" / ") : null,
+                      typeof f.pax === "number" ? `${f.pax} pax` : null,
+                    ].filter(Boolean);
+                    return (
+                      <option key={f.flight} value={f.flight}>
+                        {labelParts.join(" • ")}
+                      </option>
+                    );
+                  })}
+                </select>
+                <div className="small text-muted mt-1">
+                  Astuce: CTRL/Cmd+clic pour multi-sélectionner.
+                </div>
+              </Section>
+            )}
+          </div>
+
+          {/* ===== Colonne droite : Tableau TO / Zones / Hôtels ===== */}
+          <div className={`fm-col-right ${showRightPane ? "" : "is-disabled"}`}>
             <Section
-              title="Date du vol"
-              right={dateSel ? <span className="fm-badge">{dateSel}</span> : <span className="text-muted small">Choisir…</span>}
+              title="Synthèse"
+              right={
+                !showRightPane ? (
+                  <span className="text-muted small">
+                    Choisir une date, un aéroport et au moins un vol
+                  </span>
+                ) : null
+              }
             >
-              <select
-                className="form-select"
-                value={dateSel}
-                onChange={(e) => {
-                  setDateSel(e.target.value);
-                  setAirportSel(""); setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
-                  setSelectedDossierIds(new Set());
-                }}
-              >
-                <option value="">— Sélectionner une date —</option>
-                {dateOptions.map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </Section>
-          )}
-
-          {/* AÉROPORT */}
-          {canShowAirport && (
-            <Section title={typeSel === "depart" ? "Aéroport de départ" : "Aéroport d’arrivée"}>
-              <div className="fm-row chips-wrap">
-                {airportOptions.map((a) => {
-                  const act = airportSel === a;
-                  return (
-                    <Chip
-                      key={a}
-                      active={act}
-                      onClick={() => {
-                        const next = act ? "" : a;
-                        setAirportSel(next);
-                        setFlightsSel([]); setTosSel([]); setVillesSel([]); setHotelsSel([]);
-                        setSelectedDossierIds(new Set());
-                      }}
-                      title={a}
-                    >
-                      <strong>{a}</strong>
-                    </Chip>
-                  );
-                })}
-              </div>
-            </Section>
-          )}
-
-          {/* VOLS */}
-          {canShowFlights && (
-            <Section title="Vols">
-              <div className="fm-row chips-wrap">
-                {flightOptions.map((f) => {
-                  const act = flightsSel.includes(f.flight);
-                  const times = f.times.join(" / ");
-                  return (
-                    <Chip
-                      key={f.flight}
-                      active={act}
-                      onClick={() => {
-                        setFlightsSel((prev) =>
-                          prev.includes(f.flight) ? prev.filter((x) => x !== f.flight) : [...prev, f.flight]
-                        );
-                        setSelectedDossierIds(new Set());
-                      }}
-                      title={`${f.count} dossiers • ${f.pax} pax`}
-                    >
-                      <strong>{f.flight}</strong>
-                      {times ? <span className="fm-chip-sub">{times}</span> : null}
-                      <span className="fm-chip-pill">{f.pax} pax</span>
-                    </Chip>
-                  );
-                })}
-              </div>
-            </Section>
-          )}
-
-          {/* TO */}
-          {canShowTO && (
-            <Section title="Tour opérateur">
-              <div className="fm-row chips-wrap">
-                {toOptions.map((t) => {
-                  const act = tosSel.includes(t.to);
-                  return (
-                    <Chip
-                      key={t.to}
-                      active={act}
-                      onClick={() => {
-                        setTosSel((prev) =>
-                          prev.includes(t.to) ? prev.filter((x) => x !== t.to) : [...prev, t.to]
-                        );
-                        setSelectedDossierIds(new Set());
-                      }}
-                      title={`${t.count} dossiers • ${t.pax} pax`}
-                    >
-                      <strong>{t.to}</strong>
-                      <span className="fm-chip-pill">{t.pax} pax</span>
-                    </Chip>
-                  );
-                })}
-              </div>
-            </Section>
-          )}
-
-          {/* ZONES */}
-          {canShowVilles && (
-            <Section title="Zones (villes)">
-              <div className="fm-row chips-wrap">
-                {villeOptions.map((v) => {
-                  const act = villesSel.includes(v.ville);
-                  return (
-                    <Chip
-                      key={v.ville}
-                      active={act}
-                      onClick={() => {
-                        setVillesSel((prev) =>
-                          prev.includes(v.ville) ? prev.filter((x) => x !== v.ville) : [...prev, v.ville]
-                        );
-                        setSelectedDossierIds(new Set());
-                      }}
-                      title={`${v.count} dossiers • ${v.pax} pax`}
-                    >
-                      <strong>{v.ville}</strong>
-                      <span className="fm-chip-pill">{v.pax} pax</span>
-                    </Chip>
-                  );
-                })}
-              </div>
-            </Section>
-          )}
-
-          {/* HÔTELS */}
-          {canShowHotels && (
-            <Section title="Hôtels">
-              <div className="fm-row chips-wrap">
-                {hotelOptions.map((h) => {
-                  const act = hotelsSel.includes(h.hotel);
-                  return (
-                    <Chip
-                      key={h.hotel}
-                      active={act}
-                      onClick={() => {
-                        setHotelsSel((prev) =>
-                          prev.includes(h.hotel) ? prev.filter((x) => x !== h.hotel) : [...prev, h.hotel]
-                        );
-                        setSelectedDossierIds(new Set());
-                      }}
-                      title={`${h.count} dossiers • ${h.pax} pax`}
-                    >
-                      <strong>{h.hotel}</strong>
-                      <span className="fm-chip-pill">{h.pax} pax</span>
-                    </Chip>
-                  );
-                })}
-              </div>
-            </Section>
-          )}
-
-          {/* PAX PAR HÔTEL */}
-          {canShowPassengers && groupedByHotel.length > 0 && (
-  <Section
-    title="Pax par hôtel (sélection)"
-    right={<span className="text-muted small">Coche/décoche pour inclure dans la fiche</span>}
-  >
-              <div className="fm-hotels-list">
-                {groupedByHotel.map(([hotel, list]) => (
-                  <div key={hotel} className="fm-hotel-block">
-                    <div className="fm-hotel-head">
-                      <b>{hotel}</b>
-                      <span className="fm-chip-pill">{list.length} ligne(s)</span>
-                    </div>
-                    <div className="fm-hotel-body">
-                      {list.map((r, i) => {
-                        const checked = selectedDossierIds.has(r.id);
-                        const hasObs = !!(r.observation && String(r.observation).trim());
-                        const k = rowKeyOf(r, i);
-                        const isOpen = vm.openObs.has(k);
-                        return (
-                          <label key={r.id || `${k}`} className={`fm-passenger ${checked ? "is-checked" : ""}`}>
+              {!showRightPane ? (
+                <div className="alert alert-info m-0">
+                  Sélectionnez successivement une <b>date</b>, un{" "}
+                  <b>aéroport</b> puis au moins <b>un vol</b> pour afficher la
+                  synthèse.
+                </div>
+              ) : (
+                <div className="table-responsive">
+                  <table className="table table-striped align-middle">
+                    <thead className="table-light">
+                      <tr>
+                        <th style={{ width: "33%" }}>
+                          <div className="d-flex align-items-center gap-2">
                             <input
                               type="checkbox"
                               className="form-check-input"
-                              checked={checked}
-                              onChange={() => {
-                                setSelectedDossierIds((prev) => {
-                                  const next = new Set(prev);
-                                  if (next.has(r.id)) next.delete(r.id); else next.add(r.id);
-                                  return next;
-                                });
-                              }}
+                              checked={allTOSelected}
+                              onChange={(e) => setAllTO(e.target.checked)}
+                              aria-label="Tout sélectionner T.O"
                             />
-                            <div className="fm-passenger-main">
-                              <div className="fm-passenger-name fm-passenger-name--resa">
-                                <span className="fm-resa-name">{(r.nom_reservation || "").trim() || "—"}</span>
-                                <span className="fm-resa-pax">{getPaxDisplay(r, tCode)}</span>
+                            <span>T.O</span>
+                            <span className="badge bg-secondary">
+                              {toOptions.length}
+                            </span>
+                          </div>
+                        </th>
+                        <th style={{ width: "33%" }}>
+                          <div className="d-flex align-items-center gap-2">
+                            <input
+                              type="checkbox"
+                              className="form-check-input"
+                              checked={allVillesSelected}
+                              onChange={(e) => setAllVilles(e.target.checked)}
+                              aria-label="Tout sélectionner Zones"
+                            />
+                            <span>Zone (villes)</span>
+                            <span className="badge bg-secondary">
+                              {villeOptions.length}
+                            </span>
+                          </div>
+                        </th>
+                        <th style={{ width: "34%" }}>
+                          <div className="d-flex align-items-center gap-2">
+                            <input
+                              type="checkbox"
+                              className="form-check-input"
+                              checked={allHotelsSelected}
+                              onChange={(e) => setAllHotels(e.target.checked)}
+                              aria-label="Tout sélectionner Hôtels"
+                            />
+                            <span>Hôtels (pax)</span>
+                            <span className="badge bg-secondary">
+                              {hotelOptions.length}
+                            </span>
+                          </div>
+                        </th>
+                      </tr>
+                    </thead>
 
-                                {hasObs ? (
-                                  <button
-                                    type="button"
-                                    className={`fm-resa-caret ${isOpen ? "is-open" : ""}`}
-                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); vm.toggleObs(k); }}
-                                    aria-expanded={isOpen}
-                                    aria-label={isOpen ? "Masquer l'observation" : "Afficher l'observation"}
-                                    title={isOpen ? "Masquer l'observation" : "Afficher l'observation"}
-                                  >
-                                    <span className="warn-icon" aria-hidden="true">⚠️</span>
-                                  </button>
-                                ) : null}
-                              </div>
-
-                              {hasObs && isOpen ? (
-                                <div className="fm-obs-panel">
-                                  {String(r.observation).trim()}
-                                </div>
-                              ) : null}
-                            </div>
-                          </label>
+                    <tbody>
+                      {(() => {
+                        const maxLen = Math.max(
+                          toOptions.length,
+                          villeOptions.length,
+                          hotelOptions.length
                         );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
+                        if (maxLen === 0) {
+                          return (
+                            <tr>
+                              <td
+                                colSpan={3}
+                                className="text-center text-muted py-4"
+                              >
+                                Aucune donnée disponible pour cette sélection.
+                              </td>
+                            </tr>
+                          );
+                        }
+
+                        return Array.from({ length: maxLen }).map((_, i) => {
+                          const to = toOptions[i];
+                          const ville = villeOptions[i];
+                          const hotel = hotelOptions[i];
+
+                          const toLabel = to ? to.to ?? to.label ?? to : null;
+                          const toPax =
+                            typeof to?.pax === "number" ? to.pax : null;
+                          const toK = to ? toKey(to) : null;
+                          const toChecked = toK ? tosSel.includes(toK) : false;
+
+                          const vLabel = ville
+                            ? ville.ville ?? ville.label ?? ville
+                            : null;
+                          const vPax =
+                            typeof ville?.pax === "number" ? ville.pax : null;
+                          const vK = ville ? villeKey(ville) : null;
+                          const vChecked = vK ? villesSel.includes(vK) : false;
+
+                          const hLabel = hotel
+                            ? hotel.hotel ?? hotel.label ?? hotel
+                            : null;
+                          const hPax =
+                            typeof hotel?.pax === "number" ? hotel.pax : null;
+                          const hK = hotel ? hotelKey(hotel) : null;
+                          const hChecked = hK ? hotelsSel.includes(hK) : false;
+
+                          return (
+                            <tr key={i}>
+                              {/* T.O */}
+                              <td>
+                                {to ? (
+                                  <label className="d-flex align-items-center gap-2 m-0">
+                                    <input
+                                      type="checkbox"
+                                      className="form-check-input"
+                                      checked={toChecked}
+                                      onChange={(e) =>
+                                        toggleOneTO(toK, e.target.checked)
+                                      }
+                                    />
+                                    <span>
+                                      <strong>{toLabel}</strong>
+                                    </span>
+                                    {toPax !== null && (
+                                      <span className="badge bg-secondary">
+                                        {toPax} pax
+                                      </span>
+                                    )}
+                                  </label>
+                                ) : (
+                                  "—"
+                                )}
+                              </td>
+
+                              {/* Zone */}
+                              <td>
+                                {ville ? (
+                                  <label className="d-flex align-items-center gap-2 m-0">
+                                    <input
+                                      type="checkbox"
+                                      className="form-check-input"
+                                      checked={vChecked}
+                                      onChange={(e) =>
+                                        toggleOneVille(vK, e.target.checked)
+                                      }
+                                    />
+                                    <span>
+                                      <strong>{vLabel}</strong>
+                                    </span>
+                                    {vPax !== null && (
+                                      <span className="badge bg-secondary">
+                                        {vPax} pax
+                                      </span>
+                                    )}
+                                  </label>
+                                ) : (
+                                  "—"
+                                )}
+                              </td>
+
+                              {/* Hôtel */}
+                              <td>
+                                {hotel ? (
+                                  <label className="d-flex align-items-center gap-2 m-0">
+                                    <input
+                                      type="checkbox"
+                                      className="form-check-input"
+                                      checked={hChecked}
+                                      onChange={(e) =>
+                                        toggleOneHotel(hK, e.target.checked)
+                                      }
+                                    />
+                                    <span>
+                                      <strong>{hLabel}</strong>
+                                    </span>
+                                    {hPax !== null && (
+                                      <span className="badge bg-secondary">
+                                        {hPax} pax
+                                      </span>
+                                    )}
+                                  </label>
+                                ) : (
+                                  "—"
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        });
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </Section>
-          )}
+          </div>
         </div>
       </div>
     </div>
