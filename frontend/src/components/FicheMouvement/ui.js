@@ -1,12 +1,13 @@
 import React from "react";
 
 /* Libellés */
-export const labelType = (t) => (t === "D" ? "Départ" : t === "A" ? "Arrivée" : "");
+export const labelType = (t) =>
+  t === "D" ? "Départ" : t === "A" ? "Arrivée" : "";
 
 /* Composants UI de base */
-export function Section({ title, disabled, children, right }) {
+export function Section({ title, disabled, children, right, className = "" }) {
   return (
-    <div className={`fm-sec ${disabled ? "is-disabled" : ""}`}>
+    <div className={`fm-sec ${disabled ? "is-disabled" : ""} ${className}`}>
       <div className="fm-sec-head">
         <h3>{title}</h3>
         {right}
@@ -19,23 +20,42 @@ export function Section({ title, disabled, children, right }) {
 
 export function Chip({ active, children, onClick, title }) {
   return (
-    <button type="button" className={`fm-chip ${active ? "is-active" : ""}`} onClick={onClick} title={title || ""}>
+    <button
+      type="button"
+      className={`fm-chip ${active ? "is-active" : ""}`}
+      onClick={onClick}
+      title={title || ""}
+    >
       {children}
     </button>
   );
 }
 
 export function TopSummaryBar({
-  tCode, dateSel, airportSel, flightsSel, tosSel, villesSel, hotelsSel,
-  selectedCount, selectedPax, movementName, setMovementName, onCreate, creating
+  tCode,
+  dateSel,
+  airportSel,
+  flightsSel,
+  tosSel,
+  villesSel,
+  hotelsSel,
+  selectedCount,
+  selectedPax,
+  movementName,
+  setMovementName,
+  onCreate,
+  creating,
 }) {
-  const joinFull = (arr=[]) => arr.map(s => String(s||"").trim()).filter(Boolean);
+  const joinFull = (arr = []) =>
+    arr.map((s) => String(s || "").trim()).filter(Boolean);
   const titleJoin = (arr) => joinFull(arr).join(", ");
 
   const KV = ({ label, value, title }) => (
     <div className="kv">
       <div className="kv-label">{label}</div>
-      <div className="kv-value" title={title}>{value || "—"}</div>
+      <div className="kv-value" title={title}>
+        {value || "—"}
+      </div>
     </div>
   );
 
@@ -45,18 +65,38 @@ export function TopSummaryBar({
         <KV label="Type" value={tCode ? labelType(tCode) : "—"} />
         <KV label="Date" value={dateSel} />
         <KV label="Aéroport" value={airportSel} />
-        <KV label="Vols" value={joinFull(flightsSel).join(" · ")} title={titleJoin(flightsSel)} />
-        <KV label="TO" value={joinFull(tosSel).join(" · ")} title={titleJoin(tosSel)} />
-        <KV label="Zones" value={joinFull(villesSel).join(" · ")} title={titleJoin(villesSel)} />
-        <KV label="Hôtels" value={joinFull(hotelsSel).join(" · ")} title={titleJoin(hotelsSel)} />
+        <KV
+          label="Vols"
+          value={joinFull(flightsSel).join(" · ")}
+          title={titleJoin(flightsSel)}
+        />
+        <KV
+          label="TO"
+          value={joinFull(tosSel).join(" · ")}
+          title={titleJoin(tosSel)}
+        />
+        <KV
+          label="Zones"
+          value={joinFull(villesSel).join(" · ")}
+          title={titleJoin(villesSel)}
+        />
+        <KV
+          label="Hôtels"
+          value={joinFull(hotelsSel).join(" · ")}
+          title={titleJoin(hotelsSel)}
+        />
         <div className="kv kpi">
           <div className="kpi-pair">
-            <div className="kpi-num" aria-label="dossiers">{selectedCount}</div>
+            <div className="kpi-num" aria-label="dossiers">
+              {selectedCount}
+            </div>
             <div className="kpi-label">dossiers</div>
           </div>
           <div className="kpi-sep" />
           <div className="kpi-pair">
-            <div className="kpi-num" aria-label="pax">{selectedPax}</div>
+            <div className="kpi-num" aria-label="pax">
+              {selectedPax}
+            </div>
             <div className="kpi-label">pax</div>
           </div>
         </div>
@@ -65,11 +105,19 @@ export function TopSummaryBar({
       <div className="fm-top-summary-actions">
         <input
           className="form-control form-control-sm"
-          placeholder={(tCode && dateSel && airportSel) ? `${labelType(tCode)} ${airportSel} ${dateSel}` : "Nom de la fiche (optionnel)"}
+          placeholder={
+            tCode && dateSel && airportSel
+              ? `${labelType(tCode)} ${airportSel} ${dateSel}`
+              : "Nom de la fiche (optionnel)"
+          }
           value={movementName}
           onChange={(e) => setMovementName(e.target.value)}
         />
-        <button className="btn btn-success btn-sm" onClick={onCreate} disabled={creating || !selectedCount}>
+        <button
+          className="btn btn-success btn-sm"
+          onClick={onCreate}
+          disabled={creating || !selectedCount}
+        >
           {creating ? "Création..." : `Créer (${selectedCount})`}
         </button>
       </div>

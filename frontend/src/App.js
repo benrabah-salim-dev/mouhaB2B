@@ -28,8 +28,7 @@ import RessourcesChauffeurs from "./RessourcesChauffeurs";
 import FichesMouvementList from "./components/FicheMouvementList/FichesMouvementList";
 import OrdresMissionList from "./OrdresMissionList";
 import FicheMouvement from "./components/FicheMouvement/FicheMouvement";
-
-
+import FicheMouvementOrdre from "./components/FicheComponentOrdre/FicheMouvementOrdre";
 /* --------- Redirections “intelligentes” par agence --------- */
 function AgencyResolve({ segment }) {
   // segment: 'fiche-mouvement' | 'fiches-mouvement' | 'dossiers' etc.
@@ -41,10 +40,12 @@ function AgencyResolve({ segment }) {
   if (!ctx?.user) return <Navigate to="/login" replace />;
 
   // si l’utilisateur est admin d’agence : on connait son agence
-  if (agenceId) return <Navigate to={`/agence/${agenceId}/${segment}`} replace />;
+  if (agenceId)
+    return <Navigate to={`/agence/${agenceId}/${segment}`} replace />;
 
   // superadmin sans agence dans l’URL → renvoi vers dashboard superadmin
-  if (role === "superadmin") return <Navigate to="/dashboard/superadmin" replace />;
+  if (role === "superadmin")
+    return <Navigate to="/dashboard/superadmin" replace />;
 
   // fallback
   return <Navigate to="/login" replace />;
@@ -61,49 +62,113 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         {/* Dashboards */}
         <Route path="/dashboard/superadmin" element={<DashboardAgence />} />
-        <Route path="/agence/:agence_id/dashboard" element={<DashboardAgence />} />
+        <Route
+          path="/agence/:agence_id/dashboard"
+          element={<DashboardAgence />}
+        />
 
         {/* Fiches mouvement LISTE (avec et sans agence_id) */}
-        <Route path="/agence/:agence_id/fiches-mouvement" element={<FichesMouvementList />} />
-        <Route path="/fiches-mouvement" element={<AgencyResolve segment="fiches-mouvement" />} />
-        <Route path="/agence/:agenceId/fiches-mouvement" element={<FichesMouvementList />} />
-<Route path="/agence/:agenceId/mes-departs" element={<FichesMouvementList />} />
-<Route path="/agence/:agenceId/mes-arrivees" element={<FichesMouvementList />} />
+        <Route
+          path="/agence/:agence_id/fiches-mouvement"
+          element={<FichesMouvementList />}
+        />
+        <Route
+          path="/fiches-mouvement"
+          element={<AgencyResolve segment="fiches-mouvement" />}
+        />
+        <Route
+          path="/agence/:agenceId/fiches-mouvement"
+          element={<FichesMouvementList />}
+        />
+        <Route
+          path="/agence/:agenceId/mes-departs"
+          element={<FichesMouvementList />}
+        />
+        <Route
+          path="/agence/:agenceId/mes-arrivees"
+          element={<FichesMouvementList />}
+        />
 
-                <Route path="/ordres-mission" element={<OrdresMissionList />} />
+        <Route path="/ordres-mission" element={<OrdresMissionList />} />
 
         {/* Fiche mouvement CREATION (avec et sans agence_id) */}
-        <Route path="/agence/:agence_id/fiche-mouvement" element={<FicheMouvement />} />
-        <Route path="/fiche-mouvement" element={<AgencyResolve segment="fiche-mouvement" />} />
+        <Route
+          path="/agence/:agence_id/fiche-mouvement"
+          element={<FicheMouvement />}
+        />
+        <Route
+          path="/fiche-mouvement"
+          element={<AgencyResolve segment="fiche-mouvement" />}
+        />
+        <Route
+          path="/agence/:agence_id/fiche-mouvement/ordre"
+          element={<FicheMouvementOrdre />}
+        />
+        <Route
+          path="/fiche-mouvement/ordre"
+          element={<FicheMouvementOrdre />}
+        />
 
         {/* Hub + ressources agence */}
         <Route element={<ProtectedRoute checkAgence={true} />}>
-          <Route path="/agence/:agence_id/ressources" element={<AgenceRessourcesHub />} />
-          <Route path="/agence/:agence_id/ressources/vehicules" element={<RessourcesVehicules />} />
-          <Route path="/agence/:agence_id/ressources/chauffeurs" element={<RessourcesChauffeurs />} />
-          
+          <Route
+            path="/agence/:agence_id/ressources"
+            element={<AgenceRessourcesHub />}
+          />
+          <Route
+            path="/agence/:agence_id/ressources/vehicules"
+            element={<RessourcesVehicules />}
+          />
+          <Route
+            path="/agence/:agence_id/ressources/chauffeurs"
+            element={<RessourcesChauffeurs />}
+          />
         </Route>
 
         {/* CRUD Agences (superadmin only) */}
         <Route element={<ProtectedRoute requiredRole="superadmin" />}>
           <Route path="/agence-liste" element={<AgenceVoyageList />} />
           <Route path="/ajouter-agence" element={<AjouterAgence />} />
-          <Route path="/modifier-agence/:agence_id" element={<ModifierAgence />} />
+          <Route
+            path="/modifier-agence/:agence_id"
+            element={<ModifierAgence />}
+          />
         </Route>
 
         {/* Ressources internes agence */}
         <Route path="/agence/:agence_id/buses" element={<BusList />} />
-        <Route path="/agence/:agence_id/chauffeurs" element={<ChauffeurList />} />
-        <Route path="/ajouter-chauffeur/:agence_id" element={<AjouterChauffeur />} />
+        <Route
+          path="/agence/:agence_id/chauffeurs"
+          element={<ChauffeurList />}
+        />
+        <Route
+          path="/ajouter-chauffeur/:agence_id"
+          element={<AjouterChauffeur />}
+        />
         <Route path="/ajouter-bus/:agence_id" element={<AjouterBus />} />
-        <Route path="/agence/:agence_id/ajouter-vehicule" element={<AjouterVehicule />} />
-        <Route path="/agence/:agence_id/ajouter-chauffeur" element={<AjouterChauffeur />} />
+        <Route
+          path="/agence/:agence_id/ajouter-vehicule"
+          element={<AjouterVehicule />}
+        />
+        <Route
+          path="/agence/:agence_id/ajouter-chauffeur"
+          element={<AjouterChauffeur />}
+        />
 
         {/* Dossiers / missions */}
-        <Route path="/ajouter-dossier/:agence_id" element={<AjouterDossier />} />
-        <Route path="/mission/:mission_id/ajouter-ordre" element={<AjouterOrdreMission />} />
+        <Route
+          path="/ajouter-dossier/:agence_id"
+          element={<AjouterDossier />}
+        />
+        <Route
+          path="/mission/:mission_id/ajouter-ordre"
+          element={<AjouterOrdreMission />}
+        />
         <Route path="/agence/:agence_id/dossiers" element={<DossiersTable />} />
-        <Route path="/importer-dossier/:agence_id" element={<ImporterDossier />} />
+        <Route
+          path="/importer-dossier/:agence_id"
+          element={<ImporterDossier />}
+        />
 
         {/* Hotels */}
         <Route path="/hotels" element={<HotelList />} />

@@ -596,6 +596,13 @@ class ImporterDossierAPIView(APIView):
         lignes_ignorees: List[Dict[str, Any]] = []
         ui_rows: List[Dict[str, Any]] = []
 
+        # helper local pour format HH:MM
+        def fmt_hhmm(dt):
+            try:
+                return dt.strftime("%H:%M") if dt else ""
+            except Exception:
+                return ""
+
         # --- lecture lignes ---
         for idx, row in df.iterrows():
             # Référence obligatoire
@@ -663,8 +670,7 @@ class ImporterDossierAPIView(APIView):
             elif type_code == "D":
                 heure_depart, num_vol_retour = dt, (vol or "")
             else:
-                # fallback si D/A indéterminé: on se base sur LOCAL_IATA via resolve_airports_and_type
-                # si toujours None, on affecte à l'arrivée par défaut (plus courant en DMC)
+                # fallback si D/A indéterminé
                 if org_iata and not dst_iata:
                     heure_depart, num_vol_retour = dt, (vol or "")
                 else:
@@ -689,7 +695,7 @@ class ImporterDossierAPIView(APIView):
                 "observation": obs_joined or "",
             }
 
-            # journalise erreurs de cohérence éventuelles (sans bloquer l'upsert)
+            # journalise erreurs de cohérence éventuelles
             if errs:
                 data["observation"] = (
                     data["observation"] + " | " if data["observation"] else ""
@@ -700,12 +706,53 @@ class ImporterDossierAPIView(APIView):
             )
             (dossiers_crees if created else dossiers_mis_a_jour).append(ref)
 
+            # === valeurs "canoniques" pour l'UI ===
+            ui_type = "A" if obj.heure_arrivee else ("D" if obj.heure_depart else "")
+            ui_date = (
+                (obj.heure_arrivee or obj.heure_depart).date().isoformat()
+                if (obj.heure_arrivee or obj.heure_depart)
+                else ""
+            )
+            ui_airport = (
+                obj.aeroport_arrivee
+                if ui_type == "A"
+                else (obj.aeroport_depart if ui_type == "D" else "")
+            )
+            ui_flight_no = (
+                obj.num_vol_arrivee
+                if ui_type == "A"
+                else (obj.num_vol_retour if ui_type == "D" else "")
+            )
+            ui_flight_time = fmt_hhmm(
+                obj.heure_arrivee if ui_type == "A" else obj.heure_depart
+            )
+            ui_pax_client = (
+                obj.nombre_personnes_arrivee or obj.nombre_personnes_retour or 0
+            )
+
             ui_rows.append(
                 {
+                    # identifiants / références
                     "id": obj.id,
                     "reference": obj.reference,
-                    "ville": obj.ville,
-                    "hotel": getattr(obj.hotel, "nom", None),
+                    # champs canoniques utiles au front
+                    "type": ui_type,  # "A" ou "D"
+                    "date": ui_date,  # YYYY-MM-DD
+                    "aeroport": ui_airport,  # IATA pertinent
+                    "flight_no": ui_flight_no,  # ex: TU851
+                    "flight_time": ui_flight_time,  # "HH:MM"
+                    # synthèse
+                    "ville": obj.ville or "",
+                    "to": obj.tour_operateur or "",
+                    "_to": obj.tour_operateur or "",  # compat
+                    "hotel": getattr(obj.hotel, "nom", None) or "",
+                    # client / pax
+                    "client_name": obj.nom_reservation or "",
+                    "nom_reservation": obj.nom_reservation or "",  # compat
+                    "pax_client": ui_pax_client,
+                    # observations
+                    "observation": obj.observation or "",
+                    # champs détaillés existants (compatibilité)
                     "aeroport_arrivee": obj.aeroport_arrivee,
                     "num_vol_arrivee": obj.num_vol_arrivee,
                     "heure_arrivee": obj.heure_arrivee,
@@ -715,10 +762,7 @@ class ImporterDossierAPIView(APIView):
                     "nombre_personnes_arrivee": obj.nombre_personnes_arrivee,
                     "nombre_personnes_retour": obj.nombre_personnes_retour,
                     "tour_operateur": obj.tour_operateur or "",
-                    "_to": obj.tour_operateur or "",
-                    "nom_reservation": obj.nom_reservation or "",
                     "clients": obj.nom_reservation or "",
-                    "observation": obj.observation or "",
                 }
             )
 

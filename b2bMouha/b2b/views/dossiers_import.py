@@ -45,6 +45,15 @@ class DossiersImportablesAPIView(APIView):
         if role not in ("superadmin", "adminagence"):
             return Response([], status=200)
 
+        # ⚠️ Ne renvoyer des données que si au moins un filtre est fourni
+        aeroport = (request.query_params.get("aeroport") or "").strip()
+        t = (request.query_params.get("type") or "").strip().upper()
+        date_from = (request.query_params.get("date_from") or "").strip()
+        date_to = (request.query_params.get("date_to") or "").strip()
+
+        if not any([aeroport, t, date_from, date_to]):
+            return Response([], status=200)
+
         qs = Dossier.objects.select_related("agence", "hotel")
 
         # Portée agence

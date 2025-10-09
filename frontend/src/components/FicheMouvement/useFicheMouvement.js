@@ -1,5 +1,5 @@
 // frontend/src/components/FicheMouvement/useFicheMouvement.js
-import { useContext, useEffect, useMemo, useState, useCallback } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import api from "../../api";
 import { AuthContext } from "../../context/AuthContext";
@@ -86,7 +86,8 @@ const getPaxForType = (d, t) =>
     ? Number(d.nombre_personnes_retour || 0)
     : Number(d.nombre_personnes_arrivee || 0) +
       Number(d.nombre_personnes_retour || 0);
-const getPaxDisplay = (d, t) => `${getPaxForType(d, t)} pax`;
+export const getPaxDisplay = (d, t) => `${getPaxForType(d, t)} pax`;
+
 const formatRefFromDateKey = (dateKey) => (dateKey ? `M_${dateKey}` : null);
 const normalizeRows = (rows) =>
   rows.map((d) => ({
@@ -95,19 +96,18 @@ const normalizeRows = (rows) =>
     _to: d?._to ?? pickTO(d),
     _ref_to: d?._ref_to ?? pickRefTO(d),
   }));
-const rowKeyOf = (r, i) => String(r?.id ?? r?.reference ?? `row_${i}`);
+export const rowKeyOf = (r, i) => String(r?.id ?? r?.reference ?? `row_${i}`);
 
 /** ================= Hook ================= **/
 export function useFicheMouvement() {
   const navigate = useNavigate();
   const params = useParams();
   const { user: ctxUser } = useContext(AuthContext) || {};
-  const localUser = JSON.parse(localStorage.getItem("userData") || "{}"); // <-- garde juste l'auth locale
-  const user = ctxUser || localUser;
+  const user = ctxUser || null;
   const currentAgenceId = params.agence_id || user?.agence_id || "";
 
-  /* State (aucun persisté en localStorage) */
-  const [rows, setRows] = useState([]);
+  /* État local — aucune lecture/écriture localStorage, aucune requête “liste” auto */
+  const [rows, setRows] = useState([]); // <— UNIQUEMENT alimenté par l’import
   const [typeSel, setTypeSel] = useState(null);
   const [dateSel, setDateSel] = useState("");
   const [airportSel, setAirportSel] = useState("");
@@ -117,12 +117,13 @@ export function useFicheMouvement() {
   const [hotelsSel, setHotelsSel] = useState([]);
   const [selectedDossierIds, setSelectedDossierIds] = useState(() => new Set());
   const [openObs, setOpenObs] = useState(() => new Set());
-  const [msg, setMsg] = useState("");
+  const [msg, setMsg] = useState("Importez un fichier pour commencer.");
   const [creating, setCreating] = useState(false);
   const [movementName, setMovementName] = useState("");
   const [loading, setLoading] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState("fr");
   const [languages, setLanguages] = useState([]);
+  const [hasImported, setHasImported] = useState(false); // flag pour UI
 
   const tCode = typeSel === "arrivee" ? "A" : typeSel === "depart" ? "D" : null;
   const toggleObs = (key) =>
@@ -143,51 +144,26 @@ export function useFicheMouvement() {
           setSelectedLanguage(langs[0].code);
       } catch {}
     })();
-  }, []); // no persistence
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  /** ======= Backed list (source de vérité) ======= **/
-  const refetch = useCallback(async () => {
-    setLoading(true);
-    setMsg("");
-    try {
-      const paramsSrv = {};
-      if (airportSel) paramsSrv.aeroport = airportSel;
-      const { data } = await api.get("dossiers-importables/", {
-        params: paramsSrv,
-      });
-      const list = Array.isArray(data) ? data : [];
-      setRows(normalizeRows(list));
-      if (!list.length) setMsg("Aucun dossier importable pour le moment.");
-    } catch (err) {
-      const m =
-        err?.response?.data?.detail ||
-        err?.response?.data?.error ||
-        err?.message ||
-        "Erreur chargement dossiers.";
-      setMsg(m);
-    } finally {
-      setLoading(false);
-    }
-  }, [airportSel]);
+  /** ======= PLUS AUCUN FETCH AUTO =======
+   *  On n'appelle PAS /dossiers-importables/.
+   *  La source de vérité = la réponse de /importer-dossier/.
+   */
 
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
-
-  /* Options dépendantes */
+  /* Options dépendantes (calculées à partir de rows) */
   const dateOptions = useMemo(() => {
     if (!rows.length) return [];
     const map = new Map();
     const src = tCode ? rows.filter((r) => r._type === tCode) : rows;
-
     src.forEach((r) => {
       const dk = getDateKey(r);
       if (!dk) return;
       const entry = map.get(dk) || { label: dk, count: 0 };
-      entry.count += 1; // nombre de dossiers
+      entry.count += 1;
       map.set(dk, entry);
     });
-
     return Array.from(map.values()).sort((a, b) =>
       a.label.localeCompare(b.label)
     );
@@ -196,7 +172,6 @@ export function useFicheMouvement() {
   const airportOptions = useMemo(() => {
     if (!rows.length || !tCode || !dateSel) return [];
     const map = new Map();
-
     rows
       .filter((r) => r._type === tCode)
       .filter((r) => getDateKey(r) === dateSel)
@@ -207,11 +182,9 @@ export function useFicheMouvement() {
             : (r.aeroport_arrivee || "").trim();
         if (!val) return;
         const entry = map.get(val) || { label: val, count: 0 };
-        entry.count += 1; // nombre de dossiers
+        entry.count += 1;
         map.set(val, entry);
       });
-
-    // tri par nombre décroissant puis alpha
     return Array.from(map.values()).sort(
       (a, b) => b.count - a.count || a.label.localeCompare(b.label)
     );
@@ -364,37 +337,37 @@ export function useFicheMouvement() {
     return Array.from(map.values()).sort((a, b) => b.pax - a.pax);
   }, [rows, tCode, dateSel, airportSel, flightsSel, tosSel, villesSel]);
 
-  /* Auto-sélections */
+  /* Auto-sélections basées sur rows (après import) */
   useEffect(() => {
     if (!tCode) return;
-    if (!dateSel && dateOptions.length === 1) setDateSel(dateOptions[0]);
-  }, [tCode, dateOptions, dateSel]);
+    if (!dateSel && dateOptions.length === 1) setDateSel(dateOptions[0].label);
+  }, [tCode, dateSel, dateOptions]);
   useEffect(() => {
     if (!dateSel) return;
     if (!airportSel && airportOptions.length === 1)
-      setAirportSel(airportOptions[0]);
-  }, [dateSel, airportOptions, airportSel]);
+      setAirportSel(airportOptions[0].label);
+  }, [dateSel, airportSel, airportOptions]);
   useEffect(() => {
     if (!airportSel) return;
     if (flightsSel.length === 0 && flightOptions.length === 1)
       setFlightsSel([flightOptions[0].flight]);
-  }, [airportSel, flightOptions, flightsSel.length]);
+  }, [airportSel, flightsSel.length, flightOptions]);
   useEffect(() => {
     if (!flightsSel.length) return;
     if (!tosSel.length && toOptions.length === 1) setTosSel([toOptions[0].to]);
-  }, [flightsSel.length, toOptions, tosSel.length]);
+  }, [flightsSel.length, tosSel.length, toOptions]);
   useEffect(() => {
     if (!tosSel.length) return;
     if (!villesSel.length && villeOptions.length === 1)
       setVillesSel([villeOptions[0].ville]);
-  }, [tosSel.length, villeOptions, villesSel.length]);
+  }, [tosSel.length, villesSel.length, villeOptions]);
   useEffect(() => {
     if (!villesSel.length) return;
     if (!hotelsSel.length && hotelOptions.length === 1)
       setHotelsSel([hotelOptions[0].hotel]);
-  }, [villesSel.length, hotelOptions, hotelsSel.length]);
+  }, [villesSel.length, hotelsSel.length, hotelOptions]);
 
-  /* Filtrage dossiers — EXIGE AUSSI UN VOL */
+  /* Filtrage dossiers */
   const filteredRecords = useMemo(() => {
     if (!tCode || !dateSel || !airportSel || flightsSel.length === 0) return [];
     let filtered = rows
@@ -441,41 +414,24 @@ export function useFicheMouvement() {
     hotelsSel,
   ]);
 
-  /* Sélection par défaut quand filtre change */
+  /* Pré-sélection visible */
   useEffect(() => {
     const next = new Set(filteredRecords.map((r) => r.id).filter(Boolean));
     setSelectedDossierIds(next);
-  }, [filteredRecords.map((r) => r.id).join("|")]);
-
-  /* Regroupement hôtel */
-  const groupedByHotel = useMemo(() => {
-    const map = new Map();
-    filteredRecords.forEach((r) => {
-      const hotel =
-        (typeof r.hotel_nom === "string" && r.hotel_nom) ||
-        (typeof r.hotel_name === "string" && r.hotel_name) ||
-        (typeof r.hotel === "string" && r.hotel) ||
-        (r.hotel && r.hotel.nom) ||
-        "(Sans hôtel)";
-      const list = map.get(hotel) || [];
-      list.push(r);
-      map.set(hotel, list);
-    });
-    return Array.from(map.entries()).sort((a, b) => b[1].length - a[1].length);
   }, [filteredRecords]);
 
   /* KPIs + observations */
-  const selectedCount = Array.from(selectedDossierIds).length;
-  const selectedPax = useMemo(
-    () =>
-      filteredRecords
-        .filter((r) => selectedDossierIds.has(r.id))
-        .reduce((acc, r) => acc + getPaxForType(r, tCode), 0),
-    [filteredRecords, selectedDossierIds, tCode]
+  const selectedCount = useMemo(
+    () => Array.from(selectedDossierIds).length,
+    [selectedDossierIds]
   );
   const selectedRows = useMemo(
     () => filteredRecords.filter((r) => selectedDossierIds.has(r.id)),
     [filteredRecords, selectedDossierIds]
+  );
+  const selectedPax = useMemo(
+    () => selectedRows.reduce((acc, r) => acc + getPaxForType(r, tCode), 0),
+    [selectedRows, tCode]
   );
   const obsCount = useMemo(
     () =>
@@ -487,12 +443,13 @@ export function useFicheMouvement() {
     [selectedRows]
   );
 
-  /* Import fichier → upsert dossiers, puis refresh depuis serveur */
+  /* Import fichier → on ALIMENTE rows depuis la réponse, SANS refetch ailleurs */
   const onFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setLoading(true);
     setMsg("");
+    // reset filtres
     setTypeSel(null);
     setDateSel("");
     setAirportSel("");
@@ -505,22 +462,36 @@ export function useFicheMouvement() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("agence", currentAgenceId);
+      if (currentAgenceId) formData.append("agence", currentAgenceId);
       formData.append("langue", selectedLanguage);
+
       const res = await api.post("importer-dossier/", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      const total = Array.isArray(res.data?.dossiers)
-        ? res.data.dossiers.length
-        : 0;
+
+      // on prend ce que le backend renvoie comme lignes “exploitables”
+      const listRaw =
+        (Array.isArray(res.data?.dossiers) && res.data.dossiers) ||
+        // fallback : concat créés + MAJ si c’est ce que renvoie ton API
+        [].concat(
+          res.data?.dossiers_crees || [],
+          res.data?.dossiers_mis_a_jour || []
+        );
+
+      const list = Array.isArray(listRaw) ? listRaw : [];
+      const normalized = normalizeRows(list);
+      setRows(normalized);
+      setHasImported(true);
+
+      const total = normalized.length;
       const crees = res.data?.dossiers_crees?.length || 0;
       const maj = res.data?.dossiers_mis_a_jour?.length || 0;
+
       setMsg(
         total
           ? `Import OK — ${crees} créé(s), ${maj} MAJ, total ${total}.`
-          : "Aucune ligne exploitable."
+          : "Import terminé, aucune ligne exploitable."
       );
-      await refetch();
     } catch (err) {
       const m =
         err?.response?.data?.detail ||
@@ -534,8 +505,7 @@ export function useFicheMouvement() {
     }
   };
 
-  const clearImport = async () => {
-    // on ne touche plus au localStorage
+  const clearImport = () => {
     setRows([]);
     setTypeSel(null);
     setDateSel("");
@@ -546,15 +516,15 @@ export function useFicheMouvement() {
     setHotelsSel([]);
     setSelectedDossierIds(new Set());
     setOpenObs(new Set());
-    setMsg("Filtres réinitialisés.");
-    await refetch();
+    setHasImported(false);
+    setMsg("Importez un fichier pour commencer.");
   };
 
-  /* Création (UNE fiche même si plusieurs hôtels) */
+  /* Création */
   const onCreate = async () => {
     setMsg("");
     if (!currentAgenceId) {
-      setMsg("Agence inconnue. Ouvrez via /agence/:agence_id/fiche-mouvement.");
+      setMsg("Agence inconnue.");
       return;
     }
     if (!tCode || !dateSel || !airportSel) {
@@ -588,7 +558,7 @@ export function useFicheMouvement() {
     try {
       setCreating(true);
       await api.post("creer-fiche-mouvement/", payload);
-      await refetch();
+      setMsg("Fiche créée.");
       navigate(`/agence/${currentAgenceId}/fiches-mouvement`, {
         replace: true,
       });
@@ -634,6 +604,8 @@ export function useFicheMouvement() {
     selectedLanguage,
     setSelectedLanguage,
     languages,
+    hasImported,
+
     // dérivés
     tCode,
     dateOptions,
@@ -643,36 +615,19 @@ export function useFicheMouvement() {
     villeOptions,
     hotelOptions,
     filteredRecords,
-    groupedByHotel,
     selectedCount,
-    selectedPax: useMemo(
-      () =>
-        filteredRecords
-          .filter((r) => selectedDossierIds.has(r.id))
-          .reduce((acc, r) => acc + getPaxForType(r, tCode), 0),
-      [filteredRecords, selectedDossierIds, tCode]
-    ),
-    obsCount: useMemo(
-      () =>
-        filteredRecords
-          .filter((r) => selectedDossierIds.has(r.id))
-          .reduce(
-            (acc, r) =>
-              acc + (r.observation && String(r.observation).trim() ? 1 : 0),
-            0
-          ),
-      [filteredRecords, selectedDossierIds]
-    ),
+    selectedPax,
+    obsCount,
+
     // actions
     onFile,
     clearImport,
     onCreate,
+
     // utils
     getPaxDisplay,
     rowKeyOf,
     currentAgenceId,
     navigate,
-    // refresh manuel
-    refetch,
   };
 }
