@@ -1,23 +1,42 @@
-// FRONTEND: FicheMouvementOrdre.jsx (ordre = tri par heure_fin)
-// =============================================================
-import React, { useEffect, useMemo, useState } from "react";
+// FRONTEND: FicheMouvementOrdre.jsx (tri par heure_fin ; heure_fin auto = heure vol + 4h)
+// =======================================================================================
+import React from "react";
 import { useLocation, useNavigate, useParams, Link } from "react-router-dom";
 import api from "../../api";
 import "./FicheMouvementOrdre.css";
+
+function addMinutesToHHMM(hhmm, minutes) {
+  if (!hhmm || typeof hhmm !== "string" || !hhmm.includes(":")) return "";
+  const [hh, mm] = hhmm.split(":").map((x) => parseInt(x, 10));
+  if (Number.isNaN(hh) || Number.isNaN(mm)) return "";
+  const total = hh * 60 + mm + (Number(minutes) || 0);
+  const H = Math.floor((total % (24 * 60) + (24 * 60)) % (24 * 60) / 60); // wrap 24h
+  const M = ((total % 60) + 60) % 60;
+  return `${String(H).padStart(2, "0")}:${String(M).padStart(2, "0")}`;
+}
+
+function parseHHMMtoMinOrInf(hhmm) {
+  if (!hhmm || typeof hhmm !== "string" || !hhmm.includes(":")) return Number.POSITIVE_INFINITY;
+  const [hh, mm] = hhmm.split(":").map((x) => parseInt(x, 10));
+  if (Number.isNaN(hh) || Number.isNaN(mm)) return Number.POSITIVE_INFINITY;
+  return hh * 60 + mm;
+}
 
 export default function FicheMouvementOrdre() {
   const navigate = useNavigate();
   const params = useParams();
   const location = useLocation();
 
-  // 1) lecture des données transmises depuis la page précédente
+  // Données transmises depuis la page précédente
   const state = location.state || {};
   const {
     agence,
-    type, // "A" | "D"
+    type,           // "A" | "D"
     date,
     aeroport,
     vols = [],
+    // NOUVEAU: tableau [{flight:"BJ815", time:"10:05"}] pour afficher l’heure du vol
+    flightTimes = [],
     reference,
     tour_operateurs = [],
     villes = [],
@@ -35,7 +54,7 @@ export default function FicheMouvementOrdre() {
     vols.length > 0 &&
     Array.isArray(hotelsPayload);
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (!isStateValid) {
       navigate(
         currentAgenceId
@@ -47,54 +66,76 @@ export default function FicheMouvementOrdre() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStateValid]);
 
-  // 2) état local: on ajoute un id stable par ligne pour éditer l'heure facilement
-  const [items, setItems] = useState(() =>
-    hotelsPayload.map((h, i) => ({
-      id: `h_${i}_${String(h.hotel || "").trim()}`,
-      hotel: h.hotel,
-      pax: Number(h.pax || 0),
-      dossier_ids: Array.isArray(h.dossier_ids) ? h.dossier_ids : [],
-      heure_fin: "", // HH:MM (saisie utilisateur)
-    }))
-  );
-  const [submitting, setSubmitting] = useState(false);
-  const [msg, setMsg] = useState("");
+  // Nettoyage/mémo des heures de vols
+  const cleanedFlightTimes = React.useMemo(() => {
+    return Array.isArray(flightTimes)
+      ? flightTimes
+          .map((ft) => ({
+            flight: String(ft?.flight || "").trim(),
+            time: (ft?.time && String(ft.time).trim()) || null,
+          }))
+          .filter((ft) => ft.flight)
+      : [];
+  }, [flightTimes]);
 
-  const totalPax = useMemo(
+  // Map vol -> heure (HH:MM) pour init auto des heures fin
+  const flightTimeMap = React.useMemo(() => {
+    const m = new Map();
+    cleanedFlightTimes.forEach((ft) => {
+      if (ft.flight && ft.time) m.set(ft.flight, ft.time);
+    });
+    return m;
+  }, [cleanedFlightTimes]);
+
+  // État local: on ajoute heure_vol + heure_fin (auto = heure_vol + 240 min)
+  const [items, setItems] = React.useState(() => {
+    return hotelsPayload.map((h, i) => {
+      // essaye de déduire l’heure de vol: on prend la 1re heure dispo des vols sélectionnés
+      let baseTime = "";
+      for (const v of vols) {
+        const t = flightTimeMap.get(v);
+        if (t) {
+          baseTime = t;
+          break;
+        }
+      }
+      const heureFinAuto = baseTime ? addMinutesToHHMM(baseTime, 240) : ""; // 4h
+      return {
+        id: `h_${i}_${String(h.hotel || "").trim()}`,
+        hotel: h.hotel,
+        pax: Number(h.pax || 0),
+        dossier_ids: Array.isArray(h.dossier_ids) ? h.dossier_ids : [],
+        // affichage: on veut voir l’heure du vol ET laisser éditer l’heure fin
+        heure_vol: baseTime || "",
+        heure_fin: heureFinAuto, // modifiable
+      };
+    });
+  });
+
+  const [submitting, setSubmitting] = React.useState(false);
+  const [msg, setMsg] = React.useState("");
+
+  const totalPax = React.useMemo(
     () => items.reduce((acc, it) => acc + (Number(it.pax) || 0), 0),
     [items]
   );
 
-  // 3) tri par heure_fin (les vides en bas)
-  const parseHHMM = (s) => {
-    if (!s || typeof s !== "string") return Number.POSITIVE_INFINITY;
-    const [hh, mm] = s.split(":");
-    const H = parseInt(hh, 10);
-    const M = parseInt(mm, 10);
-    if (Number.isNaN(H) || Number.isNaN(M)) return Number.POSITIVE_INFINITY;
-    return H * 60 + M;
-  };
-
-  const sortedItems = useMemo(() => {
+  // tri par heure_fin (vides en bas)
+  const sortedItems = React.useMemo(() => {
     const arr = [...items];
     arr.sort((a, b) => {
-      const da = parseHHMM(a.heure_fin);
-      const db = parseHHMM(b.heure_fin);
-      if (da !== db) return da - db; // plus tôt en premier ; vides tout en bas
-      // tie-breaker stable: par nom d'hôtel
+      const da = parseHHMMtoMinOrInf(a.heure_fin);
+      const db = parseHHMMtoMinOrInf(b.heure_fin);
+      if (da !== db) return da - db; // plus tôt en premier
       return String(a.hotel || "").localeCompare(String(b.hotel || ""));
     });
     return arr;
   }, [items]);
 
   const setHeureFinById = (id, value) => {
-    setItems((prev) => {
-      const next = prev.map((it) => (it.id === id ? { ...it, heure_fin: value } : it));
-      return next;
-    });
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, heure_fin: value } : it)));
   };
 
-  // 4) Création → on envoie l'ordre calculé par le tri
   const onCreate = async () => {
     setMsg("");
     if (!isStateValid) return;
@@ -112,6 +153,7 @@ export default function FicheMouvementOrdre() {
         hotel: it.hotel,
         ordre: idx + 1,
         pax: Number(it.pax || 0),
+        // on garde l'heure_fin telle qu’éditée
         heure_fin: it.heure_fin || null,
         dossier_ids: it.dossier_ids,
       })),
@@ -138,7 +180,6 @@ export default function FicheMouvementOrdre() {
     }
   };
 
-  // 5) rendu
   return (
     <div className="fm-ordre-page">
       <div className="fm-ordre-wrap">
@@ -151,11 +192,23 @@ export default function FicheMouvementOrdre() {
               </span>
               <span className="me-2">{date}</span>
               <span className="me-2">{aeroport}</span>
-              <span className="text-muted">
-                Vols: {vols && vols.length ? vols.join(", ") : "—"}
-              </span>
+
+              {/* Vols + heure du vol (si connue) */}
+              <div className="small">
+                <b>Vols :</b>{" "}
+                {cleanedFlightTimes.length > 0
+                  ? cleanedFlightTimes
+                      .map((ft) =>
+                        ft.time
+                          ? `${ft.flight} — ${ft.time}`
+                          : `${ft.flight} — (heure inconnue)`
+                      )
+                      .join(", ")
+                  : (Array.isArray(vols) ? vols.join(", ") : "—")}
+              </div>
+
               <div className="small text-muted mt-1">
-                L’ordre est déterminé automatiquement par l’<b>heure fin</b> (la plus tôt en premier).  
+                L’ordre est déterminé par l’<b>heure fin</b> (plus tôt en premier).  
                 Les lignes sans heure restent en bas.
               </div>
               {msg ? <div className="text-danger small mt-1">{msg}</div> : null}
@@ -203,14 +256,15 @@ export default function FicheMouvementOrdre() {
                 <tr>
                   <th style={{ width: 120 }}>Ordre</th>
                   <th>Hôtel</th>
-                  <th style={{ width: 120, textAlign: "right" }}>Pax</th>
+                  <th>Vol (heure)</th>
                   <th style={{ width: 160 }}>Heure fin</th>
+                  <th style={{ width: 120, textAlign: "right" }}>Pax</th>
                 </tr>
               </thead>
               <tbody>
                 {sortedItems.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="text-center text-muted py-4">
+                    <td colSpan={5} className="text-center text-muted py-4">
                       Aucun hôtel à afficher.
                     </td>
                   </tr>
@@ -228,7 +282,21 @@ export default function FicheMouvementOrdre() {
                           </div>
                         ) : null}
                       </td>
-                      <td style={{ textAlign: "right" }}>{Number(it.pax || 0)}</td>
+                      <td>
+                        {/* Affiche le(s) vol(s) + première heure connue */}
+                        {vols && vols.length ? (
+                          <span>
+                            {vols
+                              .map((v) => {
+                                const t = flightTimeMap.get(v);
+                                return t ? `${v} • ${t}` : `${v} • (—)`;
+                              })
+                              .join(", ")}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                       <td>
                         <input
                           type="time"
@@ -237,6 +305,7 @@ export default function FicheMouvementOrdre() {
                           onChange={(e) => setHeureFinById(it.id, e.target.value)}
                         />
                       </td>
+                      <td style={{ textAlign: "right" }}>{Number(it.pax || 0)}</td>
                     </tr>
                   ))
                 )}
@@ -244,9 +313,8 @@ export default function FicheMouvementOrdre() {
               {sortedItems.length ? (
                 <tfoot>
                   <tr>
-                    <th colSpan={2} className="text-end">Total pax</th>
+                    <th colSpan={4} className="text-end">Total pax</th>
                     <th style={{ textAlign: "right" }}>{totalPax}</th>
-                    <th></th>
                   </tr>
                 </tfoot>
               ) : null}

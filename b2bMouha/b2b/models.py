@@ -1,17 +1,18 @@
 # b2b/models.py
-
-from django.db import models
+from django.db import models, transaction
 from django.contrib.auth.models import User
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from .utils import generate_unique_reference
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from django.conf import settings
+from django.db.models import Q
+import uuid
 
 # =========================
 # Tiers
 # =========================
-
 
 class TourOperateur(models.Model):
     nom = models.CharField(max_length=100)
@@ -25,9 +26,9 @@ class TourOperateur(models.Model):
 
 class AgenceVoyage(models.Model):
     tour_operateur = models.ForeignKey(
-        TourOperateur,
+        'b2b.TourOperateur',
         on_delete=models.CASCADE,
-        related_name="agences",
+        related_name='agences',
         null=True,
         blank=True,
     )
@@ -90,7 +91,6 @@ class Touriste(models.Model):
 # Zone (référentiel)
 # =========================
 
-
 class Zone(models.Model):
     nom = models.CharField(max_length=120, unique=True)
 
@@ -101,7 +101,6 @@ class Zone(models.Model):
 # =========================
 # Dossier
 # =========================
-
 
 class Dossier(models.Model):
     reference = models.CharField("Numéro de dossier", max_length=100, unique=True)
@@ -118,23 +117,52 @@ class Dossier(models.Model):
     )
     nombre_personnes_arrivee = models.PositiveIntegerField()
     nom_reservation = models.CharField(max_length=255)
-    touristes = models.ManyToManyField(Touriste, related_name="dossiers")
+    touristes = models.ManyToManyField('b2b.Touriste', related_name="dossiers")
     aeroport_depart = models.CharField(max_length=100)
     num_vol_retour = models.CharField(max_length=50)
     nombre_personnes_retour = models.PositiveIntegerField()
     tour_operateur = models.CharField(max_length=255, blank=True, null=True)
-
-    # persistance import
-    observation = models.TextField(null=True, blank=True)
+    observation = models.TextField(null=True, blank=True)  # persistance import
 
     def __str__(self):
         return f"Dossier {self.reference} - {self.nom_reservation}"
 
 
+class ImportBatch(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    agence = models.ForeignKey(
+        "b2b.AgenceVoyage", on_delete=models.CASCADE, related_name="import_batches"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    label = models.CharField(max_length=255, blank=True, default="")
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class ImportBatchItem(models.Model):
+    batch = models.ForeignKey(
+        ImportBatch, on_delete=models.CASCADE, related_name="items"
+    )
+    dossier = models.ForeignKey(
+        "b2b.Dossier", on_delete=models.CASCADE, related_name="import_items"
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("batch", "dossier"),
+                name="uniq_import_batch_dossier",
+            )
+        ]
+
+
 # =========================
 # Ressources
 # =========================
-
 
 class Vehicule(models.Model):
     TYPE_CHOICES = [
@@ -149,7 +177,7 @@ class Vehicule(models.Model):
     model = models.CharField(max_length=100)
     capacite = models.PositiveIntegerField()
     annee = models.PositiveIntegerField()
-    immatriculation = models.CharField(max_length=15, unique=True)
+    immatriculation = models.CharField(max_length=15, unique=True)  # noqa: F821 (max_length)
     agence = models.ForeignKey(
         AgenceVoyage, on_delete=models.CASCADE, related_name="vehicules"
     )
@@ -173,7 +201,6 @@ class Chauffeur(models.Model):
 # =========================
 # PreMission / Mission / Ordre
 # =========================
-
 
 def _base_ref_for_date(date_debut):
     try:
@@ -269,9 +296,8 @@ class OrdreMission(models.Model):
     mission = models.ForeignKey(
         Mission, on_delete=models.CASCADE, related_name="ordres_mission"
     )
-    # L’OM peut être créé depuis une fiche → lien optionnel
     fiche = models.ForeignKey(
-        "FicheMouvement",
+        "b2b.FicheMouvement",
         on_delete=models.CASCADE,
         null=True,
         blank=True,
@@ -282,7 +308,7 @@ class OrdreMission(models.Model):
     vehicule = models.ForeignKey(
         Vehicule, on_delete=models.CASCADE, null=True, blank=True
     )
-    chauffeur = models.ForeignKey(Chauffeur, on_delete=models.CASCADE)
+    chauffeur = models.ForeignKey('b2b.Chauffeur', on_delete=models.CASCADE)
     trajet = models.CharField(max_length=255)
 
     def save(self, *args, **kwargs):
@@ -297,7 +323,6 @@ class OrdreMission(models.Model):
 # =========================
 # Mapping Langues
 # =========================
-
 
 class LanguageMapping(models.Model):
     code = models.CharField(max_length=10, unique=True)
@@ -316,7 +341,6 @@ class LanguageMapping(models.Model):
 # =========================
 # Fiches Mouvement (UI/Reporting)
 # =========================
-
 
 class FicheMouvement(models.Model):
     TYPE_CHOICES = (("A", "Arrivée"), ("D", "Départ"))
@@ -344,32 +368,66 @@ class FicheMouvementItem(models.Model):
     fiche = models.ForeignKey(
         FicheMouvement, on_delete=models.CASCADE, related_name="items"
     )
+    # ⬇⬇⬇ Tolérant: si un Dossier est supprimé, l'item reste et n'explose pas
     dossier = models.ForeignKey(
-        Dossier, on_delete=models.CASCADE, related_name="fiche_items"
+        Dossier,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="fiche_items",
     )
 
     class Meta:
         indexes = [models.Index(fields=["dossier"])]
+        constraints = [
+            # Unicité (fiche, dossier) seulement quand dossier != NULL
+            models.UniqueConstraint(
+                fields=["fiche", "dossier"],
+                name="uniq_item_fiche_dossier",
+                condition=Q(dossier__isnull=False),
+            ),
+        ]
 
     def __str__(self):
-        return f"Item fiche #{self.fiche_id} – dossier {self.dossier.reference}"
+        ref = getattr(getattr(self, "dossier", None), "reference", "—")
+        return f"Item fiche #{self.fiche_id} – dossier {ref}"
 
 
 @receiver(post_delete, sender=FicheMouvementItem)
-def _delete_fiche_if_empty(sender, instance, **kwargs):
+def _delete_fiche_if_empty(sender, instance, using, **kwargs):
     """
     Si un item est supprimé et que la fiche n’a plus ni items ni OM liés,
     on supprime la fiche devenue inutile.
+
+    IMPORTANT: ne pas toucher à instance.fiche (risque DoesNotExist en cascade).
     """
-    fiche = instance.fiche
-    if fiche and not fiche.items.exists() and not fiche.ordres_mission.exists():
-        fiche.delete()
+    fiche_id = getattr(instance, "fiche_id", None)
+    if not fiche_id:
+        return
+
+    # Import tardif pour éviter les cycles
+    from b2b.models import FicheMouvement, FicheMouvementItem
+
+    # si la fiche est déjà supprimée dans la cascade
+    if not FicheMouvement.objects.using(using).filter(pk=fiche_id).exists():
+        return
+
+    has_items = FicheMouvementItem.objects.using(using).filter(fiche_id=fiche_id).exists()
+    has_oms = models.Exists(
+        OrdreMission.objects.using(using).filter(fiche_id=fiche_id)
+    )
+
+    if not has_items:
+        # On doit re-vérifier les OM avec une requête réelle (pas models.Exists seul)
+        if not OrdreMission.objects.using(using).filter(fiche_id=fiche_id).exists():
+            def _delete_parent():
+                FicheMouvement.objects.using(using).filter(pk=fiche_id).delete()
+            transaction.on_commit(_delete_parent)
 
 
 # =========================
 # Produits (Excursions / Navettes)
 # =========================
-
 
 class Produit(models.Model):
     EXCURSION = "EXCURSION"
@@ -377,20 +435,16 @@ class Produit(models.Model):
     KIND_CHOICES = [(EXCURSION, "Excursion"), (NAVETTE, "Navette")]
 
     kind = models.CharField(max_length=10, choices=KIND_CHOICES)
-
-    # propriétaire / opérateur
     agence = models.ForeignKey(
         AgenceVoyage, on_delete=models.CASCADE, related_name="produits"
     )
 
-    # commun
     titre = models.CharField(max_length=160)
     description = models.TextField(blank=True, default="")
     heure_debut = models.TimeField()
     heure_fin = models.TimeField()
     capacite = models.PositiveIntegerField(default=0)  # 0 = illimité/non géré
 
-    # Excursion
     zone_depart = models.ForeignKey(
         Zone,
         on_delete=models.SET_NULL,
@@ -407,11 +461,8 @@ class Produit(models.Model):
         blank=True,
         default="",
     )
-    theme = models.CharField(
-        max_length=160, blank=True, default=""
-    )  # itinéraire/thème global
+    theme = models.CharField(max_length=160, blank=True, default="")
 
-    # Navette
     zone_origine = models.ForeignKey(
         Zone,
         on_delete=models.SET_NULL,
@@ -432,12 +483,8 @@ class Produit(models.Model):
     def clean(self):
         if self.kind == self.EXCURSION and not self.zone_depart:
             raise ValidationError("zone_depart est requise pour une Excursion.")
-        if self.kind == self.NAVETTE and not (
-            self.zone_origine and self.zone_destination
-        ):
-            raise ValidationError(
-                "zone_origine et zone_destination sont requises pour une Navette."
-            )
+        if self.kind == self.NAVETTE and not (self.zone_origine and self.zone_destination):
+            raise ValidationError("zone_origine et zone_destination sont requises pour une Navette.")
 
     def __str__(self):
         return f"[{self.kind}] {self.titre}"
@@ -459,11 +506,7 @@ class ProduitEtape(models.Model):
 
 
 class ProduitTarif(models.Model):
-    """
-    Tarifs par zone ET par agence (chaque agence fixe ses tarifs).
-    Si plusieurs agences vendent le même Produit, elles peuvent définir leurs prix indépendamment.
-    """
-
+    """Tarifs par zone ET par agence (chaque agence fixe ses tarifs)."""
     produit = models.ForeignKey(
         Produit, on_delete=models.CASCADE, related_name="tarifs"
     )
@@ -477,18 +520,19 @@ class ProduitTarif(models.Model):
     prix_enfant = models.DecimalField(max_digits=10, decimal_places=2)
 
     class Meta:
-        unique_together = ("produit", "agence", "zone")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("produit", "agence", "zone"),
+                name="uniq_produit_tarif_agence_zone",
+            )
+        ]
 
     def __str__(self):
         return f"{self.produit.titre} [{self.agence.nom}] @ {self.zone.nom}"
 
 
 class ReservationProduit(models.Model):
-    """
-    Réservation réelle (production) : lie un Dossier à un Produit pour une date,
-    avec zone pickup, quantités, prix appliqués (snapshot), total, et éventuellement mission liée.
-    """
-
+    """Réservation réelle (production)."""
     dossier = models.ForeignKey(
         Dossier, on_delete=models.CASCADE, related_name="reservations_produits"
     )
@@ -514,16 +558,11 @@ class ReservationProduit(models.Model):
     nb_adultes = models.PositiveIntegerField(default=0)
     nb_enfants = models.PositiveIntegerField(default=0)
 
-    # snapshot des prix (issus de ProduitTarif au moment de la résa)
-    prix_adulte_applique = models.DecimalField(
-        max_digits=10, decimal_places=2, null=True, blank=True
-    )
-    prix_enfant_applique = models.DecimalField(
-        max_digits=10, decimal_places=2, null=True, blank=True
-    )
+    # snapshot des prix
+    prix_adulte_applique = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    prix_enfant_applique = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     total_ttc = models.DecimalField(max_digits=12, decimal_places=3, default=0)
 
-    # Suivi opérationnel: on peut lier la mission générée
     mission = models.ForeignKey(
         Mission,
         on_delete=models.SET_NULL,
@@ -549,12 +588,13 @@ class ReservationProduit(models.Model):
 
 
 # =========================
-# Offres inter-agences (Rentout / Rideshare) — lié à la production réelle
+# Offres inter-agences (Rentout / Rideshare)
 # =========================
+
 class VehicleOffer(models.Model):
     MODE_CHOICES = (
-        ("rentout", "Rentout"),  # location véhicule complet (journée/slot)
-        ("rideshare", "Rideshare"),  # vente de places sur un trajet réel
+        ("rentout", "Rentout"),
+        ("rideshare", "Rideshare"),
     )
 
     vehicule = models.ForeignKey(
@@ -567,11 +607,9 @@ class VehicleOffer(models.Model):
     start = models.DateTimeField()
     end = models.DateTimeField()
 
-    # Compat rétro: on garde origin/destination en texte
     origin = models.CharField(max_length=100, blank=True, default="")
     destination = models.CharField(max_length=100, blank=True, default="")
 
-    # Nouveau: zones référentielles (facultatif)
     origin_zone = models.ForeignKey(
         Zone,
         on_delete=models.SET_NULL,
@@ -587,23 +625,12 @@ class VehicleOffer(models.Model):
         related_name="offers_destination",
     )
 
-    # Capacités / places (rideshare)
-    seats_total = models.PositiveIntegerField(
-        null=True, blank=True
-    )  # défaut = vehicule.capacite
+    seats_total = models.PositiveIntegerField(null=True, blank=True)
     seats_reserved = models.PositiveIntegerField(default=0)
 
-    # Tarifs (chaque agence met ses propres tarifs)
-    # rentout: prix global; rideshare: prix par place (adulte/enfant)
-    price = models.DecimalField(
-        max_digits=10, decimal_places=2, null=True, blank=True
-    )  # rentout (forfait)
-    price_per_adult = models.DecimalField(
-        max_digits=10, decimal_places=2, null=True, blank=True
-    )  # rideshare
-    price_per_child = models.DecimalField(
-        max_digits=10, decimal_places=2, null=True, blank=True
-    )  # rideshare
+    price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    price_per_adult = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    price_per_child = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     currency = models.CharField(max_length=5, default="TND")
 
     notes = models.TextField(blank=True, default="")
@@ -624,9 +651,7 @@ class VehicleOffer(models.Model):
     def seats_available(self) -> int:
         if self.mode != "rideshare":
             return 0
-        base = (
-            self.seats_total if self.seats_total is not None else self.vehicule.capacite
-        )
+        base = self.seats_total if self.seats_total is not None else self.vehicule.capacite
         used = max(0, self.seats_reserved)
         return max(0, base - used)
 

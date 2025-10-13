@@ -73,8 +73,8 @@ export const clearTokens = () => {
 /* ----------------------------- Instance Axios principale ----------------------------- */
 const api = axios.create({
   baseURL: API_BASE.endsWith("/") ? API_BASE : API_BASE + "/",
-  timeout: 30000,
-  headers: { Accept: "application/json" },
+  timeout: 180000, // 3 minutes
+  // headers: { Accept: "application/json" },
 });
 
 

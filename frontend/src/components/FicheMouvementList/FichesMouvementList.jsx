@@ -55,9 +55,135 @@ function useFicheMode() {
   return null;
 }
 
+/** Helpers pour extraire les infos malgré des structures variables */
+function summarizeHotels(it) {
+  // 1) tableau d’hôtels [{hotel, pax, ...}]
+  if (Array.isArray(it.hotels) && it.hotels.length) {
+    const first = it.hotels[0]?.hotel || "—";
+    return it.hotels.length > 1 ? `${first} (+${it.hotels.length - 1})` : first;
+  }
+  // 2) champ simple éventuel renvoyé par l’API
+  if (typeof it.hotel === "string" && it.hotel.trim()) return it.hotel.trim();
+  return "—";
+}
+
+function extractPax(it) {
+  // 1) champs totaux s’ils existent
+  if (typeof it.pax === "number") return it.pax;
+  if (typeof it.total_pax === "number") return it.total_pax;
+
+  // 2) somme depuis hotels[].pax
+  if (Array.isArray(it.hotels)) {
+    const s = it.hotels.reduce((acc, h) => acc + (Number(h?.pax) || 0), 0);
+    if (s > 0) return s;
+  }
+
+  // 3) somme depuis dossiers (si présents) – on prend pax, sinon champs “nombre_personnes_*”
+  if (Array.isArray(it.dossiers)) {
+    const s = it.dossiers.reduce((acc, d) => {
+      const v =
+        Number(d?.pax) ||
+        Number(d?.nombre_personnes_arrivee) ||
+        Number(d?.nombre_personnes_retour) ||
+        0;
+      return acc + v;
+    }, 0);
+    if (s > 0) return s;
+  }
+
+  return "—";
+}
+
+function extractClients(it, limit = 3) {
+  // 1) string direct
+  if (typeof it.clients === "string" && it.clients.trim()) return it.clients.trim();
+
+  // 2) array direct
+  if (Array.isArray(it.clients) && it.clients.length) {
+    const arr = it.clients.map(String).map((s) => s.trim()).filter(Boolean);
+    if (!arr.length) return "—";
+    if (arr.length <= limit) return arr.join(", ");
+    return `${arr.slice(0, limit).join(", ")} (+${arr.length - limit})`;
+  }
+
+  // 3) dériver depuis dossiers (si disponibles)
+  if (Array.isArray(it.dossiers)) {
+    const names = [];
+    const push = (s) => {
+      const v = String(s || "").trim();
+      if (v) names.push(v);
+    };
+    it.dossiers.forEach((d) => {
+      // Essaie plusieurs clés
+      const last =
+        d.nom_voyageur ||
+        d.nom_client ||
+        d.nom_passager ||
+        d.nom ||
+        d.last_name ||
+        d.client_name ||
+        d.passenger_last ||
+        (d.client && (d.client.nom || d.client.name)) ||
+        (d.passager && (d.passager.nom || d.passager.name)) ||
+        "";
+      const first =
+        d.prenom_voyageur ||
+        d.prenom_client ||
+        d.prenom_passager ||
+        d.prenom ||
+        d.first_name ||
+        d.passenger_first ||
+        (d.client && (d.client.prenom || d.client.first)) ||
+        (d.passager && (d.passager.prenom || d.passager.first)) ||
+        "";
+      const single =
+        d.name ||
+        d.client ||
+        d["Nom Voyageur"] ||
+        d["Voyageur"] ||
+        d["Client"] ||
+        d.passager ||
+        d.passenger_name ||
+        "";
+
+      const full = [String(last).trim(), String(first).trim()].filter(Boolean).join(" ");
+      push(full || single);
+    });
+    // Uniques + limite
+    const uniq = Array.from(new Set(names.filter(Boolean)));
+    if (!uniq.length) return "—";
+    if (uniq.length <= limit) return uniq.join(", ");
+    return `${uniq.slice(0, limit).join(", ")} (+${uniq.length - limit})`;
+  }
+
+  return "—";
+}
+
+function extractObservation(it) {
+  // 1) champ direct
+  if (typeof it.observation === "string" && it.observation.trim()) return it.observation.trim();
+
+  // 2) concat depuis hotels[].observation
+  if (Array.isArray(it.hotels)) {
+    const list = it.hotels
+      .map((h) => String(h?.observation || "").trim())
+      .filter(Boolean);
+    if (list.length) return list.join(" • ");
+  }
+
+  // 3) concat depuis dossiers[].observation
+  if (Array.isArray(it.dossiers)) {
+    const list = it.dossiers
+      .map((d) => String(d?.observation || "").trim())
+      .filter(Boolean);
+    if (list.length) return list.join(" • ");
+  }
+
+  return "";
+}
+
 export default function FichesMouvementList() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { agenceId } = useParams();
   const mode = useFicheMode(); // "D" | "A" | null
 
@@ -66,6 +192,7 @@ export default function FichesMouvementList() {
   const [selectedMission, setSelectedMission] = useState(null);
   const [obsFullText, setObsFullText] = useState(null);
 
+  // Affichage de fin = début + 180min (affichage uniquement)
   const END_OFFSET_MIN = 180;
 
   const title = useMemo(() => {
@@ -90,8 +217,8 @@ export default function FichesMouvementList() {
 
       const { data } = await api.get(url);
       let arr = asArray(data);
-      if (mode === "D") arr = arr.filter(it => it?.type === "D");
-      if (mode === "A") arr = arr.filter(it => it?.type === "A");
+      if (mode === "D") arr = arr.filter((it) => it?.type === "D");
+      if (mode === "A") arr = arr.filter((it) => it?.type === "A");
       setItems(arr);
     } catch (e) {
       console.error(e);
@@ -137,17 +264,14 @@ export default function FichesMouvementList() {
         <h2 className="m-0">{title}</h2>
 
         <div className="d-flex flex-wrap gap-2">
-          {/* Bouton retour */}
           <button className="btn btn-outline-secondary" onClick={() => navigate(-1)}>
             ↩ Retour
           </button>
 
-          {/* Actualiser */}
           <button className="btn btn-outline-primary" onClick={fetchList} disabled={loading}>
             {loading ? "Actualisation…" : "Actualiser"}
           </button>
 
-          {/* Créer une fiche (générique) + split pour départ/arrivée */}
           <div className="btn-group">
             <button
               className="btn btn-primary"
@@ -156,7 +280,6 @@ export default function FichesMouvementList() {
             >
               + Créer une fiche de mouvement
             </button>
-  
           </div>
         </div>
       </div>
@@ -180,30 +303,39 @@ export default function FichesMouvementList() {
           </thead>
           <tbody>
             {!loading && items.map((it) => {
-              const startDisplayed = it.date_debut ? new Date(it.date_debut) : null;
+              // heures
+              const startDisplayed = it.date_debut ? new Date(it.date_debut) : (it.date ? new Date(it.date) : null);
               const endDisplayed = startDisplayed
-                ? new Date(startDisplayed.getTime() + END_OFFSET_MIN * 60 * 1000)
+                ? new Date(startDisplayed.getTime() + 180 * 60 * 1000)
                 : null;
               const endIsNextDay = isNextDay(startDisplayed, endDisplayed);
 
+              // champs robustes
+              const hotelLabel = summarizeHotels(it);
+              const paxLabel = extractPax(it);
+              const clientsLabel = extractClients(it);
+              const obsLabel = extractObservation(it);
+
               return (
                 <tr key={it.id}>
-                  <td>{it.reference}</td>
+                  <td>{it.reference || "—"}</td>
                   <td><BadgeType t={it.type} /></td>
-                  <td>{it.aeroport}</td>
-                  <td>{fmtHour(startDisplayed)}</td>
+                  <td>{it.aeroport || "—"}</td>
+                  <td>{startDisplayed ? fmtHour(startDisplayed) : "—"}</td>
                   <td>
-                    {fmtHour(endDisplayed)}
-                    {endIsNextDay && (
+                    {endDisplayed ? fmtHour(endDisplayed) : "—"}
+                    {endDisplayed && endIsNextDay && (
                       <span className="badge bg-warning text-dark ms-1" title="Le vol termine le lendemain">
                         +1j
                       </span>
                     )}
                   </td>
-                  <td>{it.hotel || "—"}</td>
-                  <td>{it.pax ?? "—"}</td>
-                  <td>{it.clients || "—"}</td>
-                  <td><ObservationCell text={it.observation} max={60} onOpen={setObsFullText} /></td>
+                  <td>{hotelLabel}</td>
+                  <td>{paxLabel}</td>
+                  <td>{clientsLabel}</td>
+                  <td>
+                    <ObservationCell text={obsLabel} max={60} onOpen={setObsFullText} />
+                  </td>
                   <td className="text-end">
                     <div className="btn-group">
                       <button

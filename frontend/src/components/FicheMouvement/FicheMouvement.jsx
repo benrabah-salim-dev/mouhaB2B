@@ -1,9 +1,8 @@
-// FRONTEND: FicheMouvement.jsx (v3.2)
-// ========================
+// src/components/FicheMouvement/FicheMouvement.jsx
 import React from "react";
 import "./ficheMouvement.css";
 import { useFicheMouvement } from "./useFicheMouvement";
-import { Section, Chip } from "./ui"; // TopSummaryBar retiré (non utilisé)
+import { Section, Chip } from "./ui";
 import { Link } from "react-router-dom";
 
 export default function FicheMouvement() {
@@ -18,22 +17,15 @@ export default function FicheMouvement() {
     languages,
     loading,
 
-    // filters & options (➡️ DROITE)
-    typeSel,
-    setTypeSel,
-    dateSel,
-    setDateSel,
-    airportSel,
-    setAirportSel,
-    flightsSel,
-    setFlightsSel,
+    // filters & options
+    typeSel, setTypeSel,
+    dateSel, setDateSel,
+    airportSel, setAirportSel,
+    flightsSel, setFlightsSel,
 
-    tosSel,
-    setTosSel,
-    villesSel,
-    setVillesSel,
-    hotelsSel,
-    setHotelsSel,
+    tosSel, setTosSel,
+    villesSel, setVillesSel,
+    hotelsSel, setHotelsSel,
 
     dateOptions,
     airportOptions,
@@ -44,6 +36,11 @@ export default function FicheMouvement() {
 
     // derived
     tCode,
+
+    // preview + mapping
+    previewOpen, previewHeaders, previewRows, parsing,
+    headerMap, setHeaderMap, TARGET_FIELDS,
+    confirmImport, cancelPreview,
   } = vm;
 
   const canShowDate = !!typeSel && dateOptions.length > 0;
@@ -60,7 +57,6 @@ export default function FicheMouvement() {
     setHotelsSel([]);
   };
 
-  // Helpers (string | object)
   const getHotel = (r) =>
     (typeof r.hotel_nom === "string" && r.hotel_nom) ||
     (typeof r.hotel_name === "string" && r.hotel_name) ||
@@ -103,14 +99,17 @@ export default function FicheMouvement() {
     return (full || String(single).trim() || "—").trim();
   };
 
-  const getDateLabel = (opt) =>
-    typeof opt === "string" ? opt : opt?.label || opt?.value || opt?.date || "—";
-  const getDateCount = (opt) =>
-    typeof opt === "object" ? opt.count ?? opt.total ?? opt.nb ?? opt.pax : undefined;
-  const getAirportLabel = (opt) =>
-    typeof opt === "string" ? opt : opt?.label || opt?.value || opt?.airport || "—";
-  const getAirportCount = (opt) =>
-    typeof opt === "object" ? opt.count ?? opt.total ?? opt.nb ?? opt.pax : undefined;
+  const paxOf = (r) =>
+    tCode === "A"
+      ? Number(r?.nombre_personnes_arrivee || 0)
+      : tCode === "D"
+      ? Number(r?.nombre_personnes_retour || 0)
+      : 0;
+
+  const getDateLabel = (opt) => (typeof opt === "string" ? opt : opt?.label || opt?.value || opt?.date || "—");
+  const getDateCount = (opt) => (typeof opt === "object" ? opt.count ?? opt.total ?? opt.nb ?? opt.pax : undefined);
+  const getAirportLabel = (opt) => (typeof opt === "string" ? opt : opt?.label || opt?.value || opt?.airport || "—");
+  const getAirportCount = (opt) => (typeof opt === "object" ? opt.count ?? opt.total ?? opt.nb ?? opt.pax : undefined);
 
   const onSelectDate = (opt) => {
     const label = getDateLabel(opt);
@@ -130,63 +129,68 @@ export default function FicheMouvement() {
     setVillesSel([]);
     setHotelsSel([]);
   };
-  const onFlightsChange = (e) => {
-    const values = Array.from(e.target.selectedOptions).map((o) => o.value);
-    setFlightsSel(values);
-  };
 
-  // === helper local pour préparer l'étape "Ordre des hôtels"
-  const getHotelLabel = (r) =>
-    (typeof r.hotel_nom === "string" && r.hotel_nom) ||
-    (typeof r.hotel_name === "string" && r.hotel_name) ||
-    (typeof r.hotel === "string" && r.hotel) ||
-    (r.hotel && r.hotel.nom) ||
-    "(Sans hôtel)";
+  const goToOrdre = () => {
+    if (!tCode || !dateSel || !airportSel || flightsSel.length === 0 || (vm.filteredRecords || []).length === 0) return;
 
-  const goToHotelOrder = () => {
-    if (!tCode || !dateSel || !airportSel || flightsSel.length === 0) return;
-
-    const rows = (Array.isArray(vm.filteredRecords) ? vm.filteredRecords : [])
+    // 1) Lignes sélectionnées (2e tableau)
+    const selectedRows = (Array.isArray(vm.filteredRecords) ? vm.filteredRecords : [])
       .filter((r) => r?.id && vm.selectedDossierIds.has(r.id));
 
-    // groupage par hôtel: {hotel, pax, dossier_ids[]}
+    if (selectedRows.length === 0) return;
+
+    // 2) Total PAX du 2e tableau (sélection)
+    const totalSelectedPax = selectedRows.reduce((acc, r) => acc + paxOf(r), 0);
+
+    // 3) Heures des vols sélectionnés (une seule heure/vol)
+    const selectedSet = new Set(flightsSel);
+    const flightTimes = (flightOptions || [])
+      .filter((f) => selectedSet.has(f.flight))
+      .map((f) => {
+        const time =
+          (f.time && String(f.time).trim()) ||
+          (Array.isArray(f.times) && f.times.length
+            ? Array.from(new Set(f.times)).sort()[0]
+            : null);
+        return { flight: f.flight, time: time || null };
+      });
+
+    // 4) Groupage par hôtel sur les lignes sélectionnées
     const map = new Map();
-    rows.forEach((r) => {
-      const hotel = getHotelLabel(r);
-      const pax =
-        (tCode === "A"
-          ? Number(r.nombre_personnes_arrivee || 0)
-          : tCode === "D"
-          ? Number(r.nombre_personnes_retour || 0)
-          : 0) || 0;
-      const entry = map.get(hotel) || { hotel, pax: 0, dossier_ids: [] };
-      entry.pax += pax;
+    selectedRows.forEach((r) => {
+      const hotel =
+        (typeof r.hotel_nom === "string" && r.hotel_nom) ||
+        (typeof r.hotel_name === "string" && r.hotel_name) ||
+        (typeof r.hotel === "string" && r.hotel) ||
+        (r.hotel && r.hotel.nom) ||
+        "(Sans hôtel)";
+      const key = String(hotel).trim();
+      const entry = map.get(key) || { hotel: key, pax: 0, dossier_ids: [] };
+      entry.pax += paxOf(r);
       entry.dossier_ids.push(r.id);
-      map.set(hotel, entry);
+      map.set(key, entry);
     });
+    const hotelsPayload = Array.from(map.values()).sort((a, b) => b.pax - a.pax);
 
-    const hotels = Array.from(map.values()).sort((a, b) => b.pax - a.pax);
-
-    const payload = {
-      agence: vm.currentAgenceId || "",
-      name: vm.movementName || "",
-      type: tCode,                 // "A" ou "D"
-      date: dateSel,               // "YYYY-MM-DD"
+    // 5) Navigation avec state complet
+    const state = {
+      agence: currentAgenceId,
+      type: tCode,
+      date: dateSel,
       aeroport: airportSel,
-      vols: flightsSel,            // info utile pour la fiche
-      filters: {
-        tos: vm.tosSel,
-        villes: vm.villesSel,
-        hotels: vm.hotelsSel,
-      },
-      hotels,                      // [{hotel, pax, dossier_ids[]}]
+      vols: flightsSel,
+      flightTimes,               // [{flight, time}]
+      reference: `M_${dateSel}`,
+      tour_operateurs: tosSel,
+      villes: villesSel,
+      hotelsPayload,             // groupé sur la sélection
+      totalSelectedPax,          // total du 2e tableau
     };
 
-    const path = vm.currentAgenceId
-      ? `/agence/${vm.currentAgenceId}/fiche-mouvement/ordre`
-      : `/fiche-mouvement/ordre`;
-
-    vm.navigate(path, { state: payload });
+    navigate(
+      currentAgenceId ? `/agence/${currentAgenceId}/fiche-mouvement/ordre` : "/fiche-mouvement/ordre",
+      { state }
+    );
   };
 
   return (
@@ -199,10 +203,7 @@ export default function FicheMouvement() {
           </div>
           <div className="fm-actions">
             {currentAgenceId ? (
-              <Link
-                className="btn btn-outline-secondary btn-sm"
-                to={`/agence/${currentAgenceId}/dashboard`}
-              >
+              <Link className="btn btn-outline-secondary btn-sm" to={`/agence/${currentAgenceId}/dashboard`}>
                 ← Dashboard
               </Link>
             ) : null}
@@ -210,9 +211,7 @@ export default function FicheMouvement() {
               type="button"
               className="btn btn-outline-primary btn-sm"
               onClick={() =>
-                currentAgenceId
-                  ? navigate(`/agence/${currentAgenceId}/fiches-mouvement`)
-                  : navigate("/fiches-mouvement")
+                currentAgenceId ? navigate(`/agence/${currentAgenceId}/fiches-mouvement`) : navigate("/fiches-mouvement")
               }
             >
               ↪ Fiches
@@ -225,7 +224,7 @@ export default function FicheMouvement() {
               disabled={loading}
               title="Langue fichier"
             >
-              {languages.length ? (
+              {(languages || []).length ? (
                 languages.map((lang) => (
                   <option key={lang.id ?? lang.code} value={lang.code}>
                     {lang.name}
@@ -237,86 +236,102 @@ export default function FicheMouvement() {
             </select>
             <label className="btn btn-dark btn-sm m-0">
               Importer Excel
-              <input
-                type="file"
-                accept=".xls,.xlsx"
-                onChange={vm.onFile}
-                hidden
-                disabled={loading}
-              />
+              <input type="file" accept=".xls,.xlsx" onChange={vm.onFile} hidden disabled={loading} />
             </label>
-            <button
-              type="button"
-              className="btn btn-outline-danger btn-sm"
-              onClick={vm.clearImport}
-            >
+            <button type="button" className="btn btn-outline-danger btn-sm" onClick={vm.clearImport}>
               🧹 Vider
             </button>
 
-            {/* —— Étape suivante : ordre des hôtels —— */}
             <div className="fm-sep" />
             <button
-  type="button"
-  className="btn btn-success btn-sm"
-  disabled={
-    !tCode ||
-    !dateSel ||
-    !airportSel ||
-    flightsSel.length === 0 ||
-    vm.filteredRecords.length === 0
-  }
-  onClick={() => {
-    // on regroupe par hôtel ce qui est présentement visible (après filtres)
-    const map = new Map();
-    vm.filteredRecords.forEach((r) => {
-      const hotel =
-        (typeof r.hotel_nom === "string" && r.hotel_nom) ||
-        (typeof r.hotel_name === "string" && r.hotel_name) ||
-        (typeof r.hotel === "string" && r.hotel) ||
-        (r.hotel && r.hotel.nom) ||
-        "(Sans hôtel)";
-      const key = String(hotel).trim();
-      const pax =
-        tCode === "A"
-          ? Number(r.nombre_personnes_arrivee || 0)
-          : Number(r.nombre_personnes_retour || 0);
-      const entry = map.get(key) || { hotel: key, pax: 0, dossier_ids: [] };
-      entry.pax += pax;
-      if (r.id != null) entry.dossier_ids.push(r.id);
-      map.set(key, entry);
-    });
-
-    const hotelsPayload = Array.from(map.values()).sort((a, b) => b.pax - a.pax);
-
-    const state = {
-      agence: vm.currentAgenceId,
-      type: vm.tCode,
-      date: vm.dateSel,
-      aeroport: vm.airportSel,
-      vols: vm.flightsSel,
-      reference: `M_${vm.dateSel}`,
-      tour_operateurs: vm.tosSel,
-      villes: vm.villesSel,
-      hotelsPayload,
-    };
-
-    // vers la page d'ordre
-    vm.navigate(
-      vm.currentAgenceId
-        ? `/agence/${vm.currentAgenceId}/fiche-mouvement/ordre`
-        : "/fiche-mouvement/ordre",
-      { state }
-    );
-  }}
->
-  Étape suivante : Ordre des hôtels →
-</button>
+              type="button"
+              className="btn btn-success btn-sm"
+              disabled={!tCode || !dateSel || !airportSel || flightsSel.length === 0 || (vm.filteredRecords || []).length === 0}
+              onClick={goToOrdre}
+            >
+              Étape suivante : Ordre des hôtels →
+            </button>
           </div>
         </header>
 
-        {/* ====== BODY: GAUCHE (grand tableau) / DROITE (sidebar choix) ====== */}
+        {/* ======= APERÇU IMPORT + MAPPING ======= */}
+        {previewOpen && (
+          <div className="card mt-3">
+            <div className="card-header d-flex justify-content-between align-items-center">
+              <strong>Aperçu (Top-10 lignes)</strong>
+              <div className="d-flex gap-2">
+                <button className="btn btn-sm btn-outline-secondary" onClick={cancelPreview}>
+                  Annuler
+                </button>
+                <button className="btn btn-sm btn-primary" disabled={parsing} onClick={() => confirmImport("auto")}>
+                  {parsing ? "Analyse…" : "Importer (auto)"}
+                </button>
+                <button className="btn btn-sm btn-success" disabled={parsing} onClick={() => confirmImport("manual")}>
+                  {parsing ? "Analyse…" : "Importer avec ce mapping"}
+                </button>
+              </div>
+            </div>
+
+            {/* Barre de mapping (dans l’en-tête, pas de 2ème entête) */}
+            <div className="card-body py-2">
+              <div className="row g-2">
+                {TARGET_FIELDS.map((f) => (
+                  <div className="col-6 col-md-3" key={f.key}>
+                    <label className="form-label mb-1 small">{f.label}</label>
+                    <select
+                      className="form-select form-select-sm"
+                      value={headerMap?.[f.key] || ""}
+                      onChange={(e) => setHeaderMap({ ...(headerMap || {}), [f.key]: e.target.value })}
+                    >
+                      <option value="">(auto)</option>
+                      {previewHeaders.map((h) => (
+                        <option key={`${f.key}-${h}`} value={h}>
+                          {h}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="table-responsive" style={{ maxHeight: 360, overflow: "auto" }}>
+              <table className="table table-sm table-striped table-bordered mb-0">
+                <thead className="table-light">
+                  <tr>
+                    {previewHeaders.length ? (
+                      previewHeaders.map((h, i) => <th key={`h-${i}`}>{String(h)}</th>)
+                    ) : (
+                      <th>(aucune colonne)</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewRows.length ? (
+                    previewRows.map((row, rIdx) => (
+                      <tr key={`r-${rIdx}`}>
+                        {previewHeaders.map((h, cIdx) => (
+                          <td key={`c-${rIdx}-${cIdx}`}>{String(row?.[h] ?? "").trim()}</td>
+                        ))}
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={previewHeaders.length || 1} className="text-center text-muted">
+                        Aucune donnée lisible.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              <div className="small text-muted p-2">Seules les 10 premières lignes sont affichées.</div>
+            </div>
+          </div>
+        )}
+
+        {/* ====== BODY: GAUCHE / DROITE ====== */}
         <div className="fm-body twocol">
-          {/* GAUCHE : GRAND TABLEAU SYNTHÈSE + DÉTAILS (collés) */}
+          {/* GAUCHE */}
           <div className="fm-col-left">
             <Section
               title="Synthèse"
@@ -345,11 +360,7 @@ export default function FicheMouvement() {
                     </thead>
                     <tbody>
                       {(() => {
-                        const maxLen = Math.max(
-                          toOptions.length,
-                          villeOptions.length,
-                          hotelOptions.length
-                        );
+                        const maxLen = Math.max(toOptions.length, villeOptions.length, hotelOptions.length);
                         if (maxLen === 0) {
                           return (
                             <tr>
@@ -389,9 +400,7 @@ export default function FicheMouvement() {
                                       aria-label={`Sélectionner TO ${toLabel}`}
                                     />
                                     <strong>{toLabel}</strong>
-                                    {toPax !== null && (
-                                      <span className="badge bg-secondary">{toPax} pax</span>
-                                    )}
+                                    {toPax !== null && <span className="badge bg-secondary">{toPax} pax</span>}
                                   </div>
                                 ) : (
                                   "—"
@@ -406,19 +415,13 @@ export default function FicheMouvement() {
                                       checked={vm.villesSel.includes(vLabel)}
                                       onChange={(e) =>
                                         e.target.checked
-                                          ? vm.setVillesSel(
-                                              Array.from(new Set([...vm.villesSel, vLabel]))
-                                            )
-                                          : vm.setVillesSel(
-                                              vm.villesSel.filter((k) => k !== vLabel)
-                                            )
+                                          ? vm.setVillesSel(Array.from(new Set([...vm.villesSel, vLabel])))
+                                          : vm.setVillesSel(vm.villesSel.filter((k) => k !== vLabel))
                                       }
                                       aria-label={`Sélectionner zone ${vLabel}`}
                                     />
                                     <strong>{vLabel}</strong>
-                                    {vPax !== null && (
-                                      <span className="badge bg-secondary">{vPax} pax</span>
-                                    )}
+                                    {vPax !== null && <span className="badge bg-secondary">{vPax} pax</span>}
                                   </div>
                                 ) : (
                                   "—"
@@ -433,17 +436,13 @@ export default function FicheMouvement() {
                                       checked={vm.hotelsSel.includes(hLabel)}
                                       onChange={(e) =>
                                         e.target.checked
-                                          ? vm.setHotelsSel(
-                                              Array.from(new Set([...vm.hotelsSel, hLabel]))
-                                            )
+                                          ? vm.setHotelsSel(Array.from(new Set([...vm.hotelsSel, hLabel])))
                                           : vm.setHotelsSel(vm.hotelsSel.filter((k) => k !== hLabel))
                                       }
                                       aria-label={`Sélectionner hôtel ${hLabel}`}
                                     />
                                     <strong>{hLabel}</strong>
-                                    {hPax !== null && (
-                                      <span className="badge bg-secondary">{hPax} pax</span>
-                                    )}
+                                    {hPax !== null && <span className="badge bg-secondary">{hPax} pax</span>}
                                   </div>
                                 ) : (
                                   "—"
@@ -459,100 +458,113 @@ export default function FicheMouvement() {
               )}
             </Section>
 
-            {/* ===== DÉTAILS (collé sous la synthèse) ===== */}
+            {/* ===== DÉTAILS ===== */}
             {showRightPane && (tosSel.length + villesSel.length + hotelsSel.length > 0) && (
               <Section title="Détails des dossiers (visibles)" className="stack stack-bottom">
-                <div className="table-responsive">
-                  <table className="table table-hover align-middle">
-                    <thead className="table-light">
-                      <tr>
-                        <th style={{ width: 36 }}>
-                          {(() => {
-                            const rowsVis = (Array.isArray(vm.filteredRecords)
-                              ? vm.filteredRecords
-                              : []
-                            ).filter((r) => r && r.id);
-                            const allChecked =
-                              rowsVis.length > 0 &&
-                              rowsVis.every((r) => vm.selectedDossierIds.has(r.id));
-                            const toggleAll = (checked) => {
-                              const next = new Set(vm.selectedDossierIds);
-                              if (checked) rowsVis.forEach((r) => next.add(r.id));
-                              else rowsVis.forEach((r) => next.delete(r.id));
-                              vm.setSelectedDossierIds(next);
-                            };
-                            return (
-                              <input
-                                type="checkbox"
-                                className="form-check-input"
-                                aria-label="Tout sélectionner (détails)"
-                                checked={allChecked}
-                                onChange={(e) => toggleAll(e.target.checked)}
-                              />
-                            );
-                          })()}
-                        </th>
-                        <th>Hôtel</th>
-                        <th>Nom client</th>
-                        <th style={{ width: 80 }}>Pax</th>
-                        <th>Observations</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(() => {
-                        const rowsVis = Array.isArray(vm.filteredRecords) ? vm.filteredRecords : [];
-                        if (!rowsVis.length) {
-                          return (
+                {(() => {
+                  const rowsVis = Array.isArray(vm.filteredRecords) ? vm.filteredRecords : [];
+
+                  const selectedPax = rowsVis.reduce(
+                    (acc, r) => (!r?.id || !vm.selectedDossierIds.has(r.id) ? acc : acc + paxOf(r)),
+                    0
+                  );
+
+                  return (
+                    <>
+                      <div className="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        <span className="badge bg-primary">PAX sélectionnés : {selectedPax}</span>
+                      </div>
+
+                      <div className="table-responsive">
+                        <table className="table table-hover align-middle">
+                          <thead className="table-light">
                             <tr>
-                              <td colSpan={5} className="text-center text-muted py-4">
-                                Aucune ligne à afficher pour cette sélection.
-                              </td>
+                              <th style={{ width: 36 }}>
+                                {(() => {
+                                  const allCheckable = rowsVis.filter((r) => r && r.id);
+                                  const allChecked =
+                                    allCheckable.length > 0 &&
+                                    allCheckable.every((r) => vm.selectedDossierIds.has(r.id));
+                                  const toggleAll = (checked) => {
+                                    const next = new Set(vm.selectedDossierIds);
+                                    allCheckable.forEach((r) => {
+                                      if (checked) next.add(r.id);
+                                      else next.delete(r.id);
+                                    });
+                                    vm.setSelectedDossierIds(next);
+                                  };
+                                  return (
+                                    <input
+                                      type="checkbox"
+                                      className="form-check-input"
+                                      aria-label="Tout sélectionner (détails)"
+                                      checked={allChecked}
+                                      onChange={(e) => toggleAll(e.target.checked)}
+                                    />
+                                  );
+                                })()}
+                              </th>
+                              <th>Hôtel</th>
+                              <th>Nom client</th>
+                              <th style={{ width: 80 }}>Pax</th>
+                              <th>Observations</th>
                             </tr>
-                          );
-                        }
-                        return rowsVis.map((r, i) => {
-                          const checked = r?.id ? vm.selectedDossierIds.has(r.id) : false;
-                          const onToggle = (val) => {
-                            const next = new Set(vm.selectedDossierIds);
-                            if (!r?.id) return;
-                            if (val) next.add(r.id);
-                            else next.delete(r.id);
-                            vm.setSelectedDossierIds(next);
-                          };
-                          return (
-                            <tr key={vm.rowKeyOf(r, i)}>
-                              <td>
-                                <input
-                                  type="checkbox"
-                                  className="form-check-input"
-                                  aria-label="Sélectionner ligne détails"
-                                  checked={checked}
-                                  onChange={(e) => onToggle(e.target.checked)}
-                                />
-                              </td>
-                              <td>{getHotel(r)}</td>
-                              <td>{getVoyageur(r)}</td>
-                              <td>{vm.getPaxDisplay(r, tCode)}</td>
-                              <td>{(r.observation && String(r.observation).trim()) || ""}</td>
-                            </tr>
-                          );
-                        });
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
+                          </thead>
+                          <tbody>
+                            {rowsVis.length === 0 ? (
+                              <tr>
+                                <td colSpan={5} className="text-center text-muted py-4">
+                                  Aucune ligne à afficher pour cette sélection.
+                                </td>
+                              </tr>
+                            ) : (
+                              rowsVis.map((r, i) => {
+                                const checked = r?.id ? vm.selectedDossierIds.has(r.id) : false;
+                                const onToggle = (val) => {
+                                  if (!r?.id) return;
+                                  const next = new Set(vm.selectedDossierIds);
+                                  if (val) next.add(r.id);
+                                  else next.delete(r.id);
+                                  vm.setSelectedDossierIds(next);
+                                };
+
+                                return (
+                                  <tr key={vm.rowKeyOf(r, i)}>
+                                    <td>
+                                      <input
+                                        type="checkbox"
+                                        className="form-check-input"
+                                        aria-label="Sélectionner ligne détails"
+                                        checked={checked}
+                                        onChange={(e) => onToggle(e.target.checked)}
+                                      />
+                                    </td>
+                                    <td>{getHotel(r)}</td>
+                                    <td>{getVoyageur(r)}</td>
+                                    <td>{paxOf(r)} pax</td>
+                                    <td>{(r.observation && String(r.observation).trim()) || ""}</td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  );
+                })()}
               </Section>
             )}
           </div>
 
-          {/* DROITE : SIDEBAR CHOIX (Type → Date → Aéroport → Vols) */}
+          {/* DROITE */}
           <aside className="fm-col-right sidebar">
             <Section title="Type de mouvement">
               <div className="fm-type-inline">
                 <Chip
-                  active={vm.typeSel === "arrivee"}
+                  active={typeSel === "arrivee"}
                   onClick={() => {
-                    vm.setTypeSel("arrivee");
+                    setTypeSel("arrivee");
                     resetDownstream();
                   }}
                   title="Arrivées"
@@ -560,9 +572,9 @@ export default function FicheMouvement() {
                   Arrivées
                 </Chip>
                 <Chip
-                  active={vm.typeSel === "depart"}
+                  active={typeSel === "depart"}
                   onClick={() => {
-                    vm.setTypeSel("depart");
+                    setTypeSel("depart");
                     resetDownstream();
                   }}
                   title="Départs"
@@ -584,7 +596,7 @@ export default function FicheMouvement() {
                   aria-label="Choisir la date"
                 >
                   <option value="">— Sélectionner —</option>
-                  {vm.dateOptions.map((d) => {
+                  {dateOptions.map((d) => {
                     const label = getDateLabel(d);
                     const count = getDateCount(d);
                     return (
@@ -599,9 +611,7 @@ export default function FicheMouvement() {
             )}
 
             {canShowAirport && (
-              <Section
-                title={vm.typeSel === "depart" ? "Aéroport de départ" : "Aéroport d’arrivée"}
-              >
+              <Section title={typeSel === "depart" ? "Aéroport de départ" : "Aéroport d’arrivée"}>
                 <select
                   className="form-select form-select-sm"
                   value={airportSel}
@@ -612,7 +622,7 @@ export default function FicheMouvement() {
                   aria-label="Choisir l'aéroport"
                 >
                   <option value="">— Sélectionner —</option>
-                  {vm.airportOptions.map((a) => {
+                  {airportOptions.map((a) => {
                     const label = getAirportLabel(a);
                     const count = getAirportCount(a);
                     return (
@@ -627,31 +637,78 @@ export default function FicheMouvement() {
             )}
 
             {canShowFlights && (
-              <Section title="Vols (multi-sélection)">
-                <select
-                  multiple
-                  size={Math.min(10, Math.max(4, vm.flightOptions.length))}
-                  className="form-select form-select-sm"
-                  value={flightsSel}
-                  onChange={onFlightsChange}
-                  style={{ maxHeight: "16rem" }}
-                  aria-label="Choisir les vols"
-                >
-                  {vm.flightOptions.map((f) => {
-                    const parts = [
-                      f.flight || "—",
-                      f.times?.length ? f.times.join(" / ") : null,
-                      typeof f.pax === "number" ? `${f.pax} pax` : null,
-                    ].filter(Boolean);
+              <Section title="Vols (cases à cocher)">
+                <div className="fm-flights">
+                  {/* Tout sélectionner */}
+                  {(() => {
+                    const allIds = flightOptions.map((f) => f.flight);
+                    const allChecked =
+                      allIds.length > 0 && allIds.every((id) => flightsSel.includes(id));
+                    const toggleAll = (checked) => {
+                      setFlightsSel(checked ? allIds : []);
+                    };
                     return (
-                      <option key={`fl-${f.flight}`} value={f.flight}>
-                        {parts.join(" • ")}
-                      </option>
+                      <div className="form-check mb-2">
+                        <input
+                          id="flights-select-all"
+                          type="checkbox"
+                          className="form-check-input"
+                          checked={allChecked}
+                          onChange={(e) => toggleAll(e.target.checked)}
+                        />
+                        <label htmlFor="flights-select-all" className="form-check-label">
+                          Tout sélectionner ({allIds.length})
+                        </label>
+                      </div>
                     );
-                  })}
-                </select>
-                <div className="small text-muted mt-1">
-                  Astuce: CTRL/Cmd+clic pour multi-sélectionner.
+                  })()}
+
+                  {/* Liste des vols */}
+                  <div className="fm-flight-list">
+                    {flightOptions.length === 0 ? (
+                      <div className="text-muted small">Aucun vol pour cette sélection.</div>
+                    ) : (
+                      flightOptions.map((f) => {
+                        const hour =
+                          (f.time && String(f.time).trim()) ||
+                          (Array.isArray(f.times) && f.times.length
+                            ? Array.from(new Set(f.times)).sort()[0]
+                            : null);
+                        const labelParts = [
+                          f.flight || "—",
+                          hour ? hour : null,
+                          typeof f.pax === "number" ? `${f.pax} pax` : null,
+                        ].filter(Boolean);
+                        const label = labelParts.join(" • ");
+                        const checked = flightsSel.includes(f.flight);
+                        const toggleOne = (isChecked) => {
+                          const next = new Set(flightsSel);
+                          if (isChecked) next.add(f.flight);
+                          else next.delete(f.flight);
+                          setFlightsSel(Array.from(next));
+                        };
+                        const cid = `fl-${f.flight}`;
+                        return (
+                          <div className="form-check fm-flight-item" key={f.flight}>
+                            <input
+                              id={cid}
+                              type="checkbox"
+                              className="form-check-input"
+                              checked={checked}
+                              onChange={(e) => toggleOne(e.target.checked)}
+                            />
+                            <label htmlFor={cid} className="form-check-label">
+                              {label}
+                            </label>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  <div className="small text-muted mt-2">
+                    Astuce : utilisez “Tout sélectionner” puis décochez au besoin.
+                  </div>
                 </div>
               </Section>
             )}

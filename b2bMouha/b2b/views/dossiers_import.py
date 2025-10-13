@@ -64,6 +64,7 @@ class DossiersImportablesAPIView(APIView):
             qs = qs.filter(agence=_user_agence(request.user))
 
         # Exclure ceux déjà utilisés dans une fiche
+        # Assumes related_name='fiche_items' depuis FicheMouvementItem vers Dossier
         qs = qs.exclude(fiche_items__isnull=False)
 
         # Filtres simples

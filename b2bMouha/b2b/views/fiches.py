@@ -485,6 +485,340 @@ class FicheMouvementItemViewSet(ModelViewSet):
 # LISTE “plate” pour le front (et cache les fiches déjà transformées en OM)
 # ---------------------------------------------------------------------
 class FichesMouvementListAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _has_om_for_fiche(self, fiche: FicheMouvement) -> bool:
+        """Test OM sans jamais toucher aux relations .dossier sur les items."""
+        tag = _fiche_tag(fiche.id)
+        dossier_ids_qs = FicheMouvementItem.objects.filter(
+            fiche_id=fiche.id, dossier_id__isnull=False
+        ).values_list("dossier_id", flat=True)
+        return PreMission.objects.filter(
+            agence=fiche.agence,
+            remarques__icontains=tag,
+            dossier_id__in=dossier_ids_qs,
+        ).exists()
+
+    def get(self, request):
+        role = _user_role(request.user)
+        if role not in ("superadmin", "adminagence"):
+            return Response(
+                {"results": [], "count": 0, "page": 1, "page_size": 20, "total_pages": 0},
+                status=200,
+            )
+
+        qs = FicheMouvement.objects.all().select_related("agence", "created_by")
+        if role == "adminagence":
+            qs = qs.filter(agence=_user_agence(request.user))
+
+        # --- filtres
+        search = (request.query_params.get("search") or "").strip()
+        type_code = (request.query_params.get("type") or "").strip().upper()
+        aeroport_filter = (request.query_params.get("aeroport") or "").strip()
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+        page = int(request.query_params.get("page", 1))
+        page_size = int(request.query_params.get("page_size", 20))
+
+        if type_code in ("A", "D"):
+            qs = qs.filter(type=type_code)
+        if aeroport_filter:
+            qs = qs.filter(aeroport__iexact=aeroport_filter)
+        if date_from:
+            try:
+                qs = qs.filter(date__gte=datetime.fromisoformat(date_from).date())
+            except Exception:
+                pass
+        if date_to:
+            try:
+                qs = qs.filter(date__lte=datetime.fromisoformat(date_to).date())
+            except Exception:
+                pass
+
+        rows = []
+        for fiche in qs.order_by("-date", "-id"):
+            # Filtre OM — no touch to item.dossier
+            if self._has_om_for_fiche(fiche):
+                continue
+
+            # Toutes les lignes de la fiche (uniquement champs sûrs)
+            items = list(
+                FicheMouvementItem.objects
+                .filter(fiche_id=fiche.id)
+                .only("id", "fiche_id", "dossier_id")
+            )
+
+            # Résoudre dossiers par ID, ignorer les orphelins
+            dossier_ids = [i.dossier_id for i in items if i.dossier_id]
+            if dossier_ids:
+                d_by_id = {
+                    d.id: d
+                    for d in Dossier.objects
+                    .filter(id__in=dossier_ids)
+                    .select_related("hotel")
+                }
+                dossiers = [d_by_id[i.dossier_id] for i in items if i.dossier_id in d_by_id]
+            else:
+                dossiers = []
+
+            t = fiche.type
+            apt = fiche.aeroport or ""
+
+            # Heure de début = min des heures connues (arrivée/départ selon type)
+            heures = []
+            for d in dossiers:
+                if t == "A" and getattr(d, "heure_arrivee", None):
+                    heures.append(d.heure_arrivee)
+                elif t == "D" and getattr(d, "heure_depart", None):
+                    heures.append(d.heure_depart)
+                else:
+                    dt = getattr(d, "heure_arrivee", None) or getattr(d, "heure_depart", None)
+                    if dt:
+                        heures.append(dt)
+
+            if heures:
+                date_debut = min(heures)
+                if timezone.is_naive(date_debut):
+                    date_debut = timezone.make_aware(date_debut)
+            else:
+                hb = datetime.combine(fiche.date, datetime.min.time()).replace(
+                    hour=8, minute=0, second=0, microsecond=0
+                )
+                date_debut = timezone.make_aware(hb) if timezone.is_naive(hb) else hb
+
+            # Fin: +3h (ajuste si besoin)
+            date_fin = date_debut + timedelta(hours=3)
+
+            # PAX par hôtel
+            hotel_pax = {}
+            total_pax = 0
+            for d in dossiers:
+                hotel_name = (getattr(getattr(d, "hotel", None), "nom", None) or "(Sans hôtel)").strip()
+                if t == "A":
+                    p = int(getattr(d, "nombre_personnes_arrivee", 0) or 0)
+                elif t == "D":
+                    p = int(getattr(d, "nombre_personnes_retour", 0) or 0)
+                else:
+                    p = int(getattr(d, "nombre_personnes_arrivee", 0) or 0) + int(
+                        getattr(d, "nombre_personnes_retour", 0) or 0
+                    )
+                total_pax += p
+                hotel_pax[hotel_name] = hotel_pax.get(hotel_name, 0) + p
+
+            hotels_list = [{"name": n, "pax": px} for n, px in hotel_pax.items()]
+            hotels_list.sort(key=lambda x: (-x["pax"], x["name"]))
+            hotel_display = hotels_list[0]["name"] if len(hotels_list) == 1 else "—"
+
+            # Clients / observations (sur dossiers réels uniquement)
+            clients_list, obs_list = [], []
+            for d in dossiers:
+                c = _format_clients(d) or ""
+                if c:
+                    clients_list.append(c)
+                o = (getattr(d, "observation", "") or "").strip()
+                if o:
+                    obs_list.append(o)
+            clients_display = ", ".join(list(dict.fromkeys(clients_list))[:5]) or "—"
+            obs_unique = list(dict.fromkeys(obs_list))
+            observation = re.sub(r"\s+", " ", " | ".join(obs_unique[:2])).strip()
+            if len(observation) > 140:
+                observation = observation[:140].rstrip() + "…"
+
+            ref_display = fiche.name or f"M_{fiche.date.isoformat()}"
+
+            rows.append({
+                "id": fiche.id,
+                "reference": ref_display,
+                "type": t,
+                "aeroport": apt,
+                "date_debut": date_debut,
+                "date_fin": date_fin,
+                "hotel": hotel_display,
+                "hotels": hotels_list,
+                "pax": total_pax or None,
+                "clients": clients_display,
+                "observation": observation,
+                "hotel_schedule": fiche.hotel_schedule or [],
+            })
+
+        # recherche plein texte simple
+        if search:
+            s = search.lower()
+            def _hit(r):
+                return any(
+                    s in (str(r.get(k, "")) or "").lower()
+                    for k in ("reference", "aeroport", "hotel", "clients", "observation")
+                )
+            rows = [r for r in rows if _hit(r)]
+
+        paginator = Paginator(rows, page_size)
+        page_obj = paginator.get_page(page)
+        return Response({
+            "results": list(page_obj.object_list),
+            "count": paginator.count,
+            "page": page_obj.number,
+            "page_size": page_size,
+            "total_pages": paginator.num_pages,
+        }, status=200)    
+        
+    permission_classes = [IsAuthenticated]
+
+    def _has_om_for_fiche(self, fiche: FicheMouvement) -> bool:
+        tag = _fiche_tag(fiche.id)
+        return PreMission.objects.filter(
+            agence=fiche.agence,
+            remarques__icontains=tag,
+            dossier__in=FicheMouvementItem.objects.filter(fiche=fiche).values("dossier_id")
+        ).exists()
+
+    def get(self, request):
+        role = _user_role(request.user)
+        if role not in ("superadmin", "adminagence"):
+            return Response({"results": [], "count": 0, "page": 1, "page_size": 20, "total_pages": 0}, status=200)
+
+        qs = (
+            FicheMouvement.objects.all()
+            .select_related("agence", "created_by")
+            # on garde le prefetch mais on n’utilisera PAS it.dossier directement
+            .prefetch_related("items__dossier", "items__dossier__hotel")
+        )
+        if role == "adminagence":
+            qs = qs.filter(agence=_user_agence(request.user))
+
+        search = (request.query_params.get("search") or "").strip()
+        type_code = (request.query_params.get("type") or "").strip().upper()
+        aeroport_filter = (request.query_params.get("aeroport") or "").strip()
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+        page = int(request.query_params.get("page", 1))
+        page_size = int(request.query_params.get("page_size", 20))
+
+        if type_code in ("A", "D"):
+            qs = qs.filter(type=type_code)
+        if aeroport_filter:
+            qs = qs.filter(aeroport__iexact=aeroport_filter)
+        if date_from:
+            try:
+                df = datetime.fromisoformat(date_from).date()
+                qs = qs.filter(date__gte=df)
+            except Exception:
+                pass
+        if date_to:
+            try:
+                dt_ = datetime.fromisoformat(date_to).date()
+                qs = qs.filter(date__lte=dt_)
+            except Exception:
+                pass
+
+        rows = []
+        for fiche in qs.order_by("-date", "-id"):
+            if self._has_om_for_fiche(fiche):
+                continue
+
+            items = list(fiche.items.all())
+
+            # ★ CHANGEMENT: résout les dossiers via ID pour ignorer les orphelins
+            dossier_ids = [it.dossier_id for it in items if it.dossier_id]
+            d_by_id = {
+                d.id: d
+                for d in Dossier.objects.filter(id__in=dossier_ids).select_related("hotel")
+            }
+            dossiers = [d_by_id[it.dossier_id] for it in items if it.dossier_id in d_by_id]
+            # ↑ aucune levée d’exception si une FK est cassée : on l’ignore.
+
+            t = fiche.type
+            apt = fiche.aeroport or ""
+
+            heures = []
+            for d in dossiers:
+                if t == "A" and getattr(d, "heure_arrivee", None):
+                    heures.append(d.heure_arrivee)
+                elif t == "D" and getattr(d, "heure_depart", None):
+                    heures.append(d.heure_depart)
+                else:
+                    dt = getattr(d, "heure_arrivee", None) or getattr(d, "heure_depart", None)
+                    if dt:
+                        heures.append(dt)
+
+            if heures:
+                date_debut = min(heures)
+                if timezone.is_naive(date_debut):
+                    date_debut = timezone.make_aware(date_debut)
+            else:
+                hb = datetime.combine(fiche.date, datetime.min.time()).replace(hour=8, minute=0, second=0, microsecond=0)
+                date_debut = timezone.make_aware(hb) if timezone.is_naive(hb) else hb
+
+            date_fin = date_debut + timedelta(hours=3)
+
+            hotel_pax = {}
+            total_pax = 0
+            for d in dossiers:
+                hotel_name = (getattr(getattr(d, "hotel", None), "nom", None) or "(Sans hôtel)").strip()
+                if t == "A":
+                    p = int(getattr(d, "nombre_personnes_arrivee", 0) or 0)
+                elif t == "D":
+                    p = int(getattr(d, "nombre_personnes_retour", 0) or 0)
+                else:
+                    p = int(getattr(d, "nombre_personnes_arrivee", 0) or 0) + int(getattr(d, "nombre_personnes_retour", 0) or 0)
+                total_pax += p
+                hotel_pax[hotel_name] = hotel_pax.get(hotel_name, 0) + p
+
+            hotels_list = [{"name": n, "pax": px} for n, px in hotel_pax.items()]
+            hotels_list.sort(key=lambda x: (-x["pax"], x["name"]))
+            hotel_display = hotels_list[0]["name"] if len(hotels_list) == 1 else "—"
+
+            clients_list = []
+            obs_list = []
+            for d in dossiers:
+                c = _format_clients(d)
+                if c:
+                    clients_list.append(c)
+                o = (getattr(d, "observation", "") or "").strip()
+                if o:
+                    obs_list.append(o)
+            clients_display = ", ".join(list(dict.fromkeys(clients_list))[:5]) or "—"
+            obs_unique = list(dict.fromkeys(obs_list))
+            observation = re.sub(r"\s+", " ", " | ".join(obs_unique[:2])).strip()
+            if len(observation) > 140:
+                observation = observation[:140].rstrip() + "…"
+
+            ref_display = fiche.name or f"M_{fiche.date.isoformat()}"
+
+            rows.append(
+                {
+                    "id": fiche.id,
+                    "reference": ref_display,
+                    "type": t,
+                    "aeroport": apt,
+                    "date_debut": date_debut,
+                    "date_fin": date_fin,
+                    "hotel": hotel_display,
+                    "hotels": hotels_list,
+                    "pax": total_pax or None,
+                    "clients": clients_display,
+                    "observation": observation,
+                    "hotel_schedule": fiche.hotel_schedule or [],
+                }
+            )
+
+        if search:
+            s = search.lower()
+            def _hit(r):
+                return any(
+                    s in (str(r.get(k, "")) or "").lower()
+                    for k in ("reference", "aeroport", "hotel", "clients", "observation")
+                )
+            rows = [r for r in rows if _hit(r)]
+
+        paginator = Paginator(rows, page_size)
+        page_obj = paginator.get_page(page)
+        return Response({
+            "results": list(page_obj.object_list),
+            "count": paginator.count,
+            "page": page_obj.number,
+            "page_size": page_size,
+            "total_pages": paginator.num_pages,
+        }, status=200)
     """
     Sortie par fiche :
       - id, reference (name ou M_YYYY-MM-DD), type, aeroport
