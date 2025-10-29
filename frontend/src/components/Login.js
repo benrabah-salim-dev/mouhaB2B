@@ -1,8 +1,8 @@
 // src/pages/LoginPage.jsx
 import React, { useState, useContext, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom"; // 👈 ajout Link
 import { AuthContext } from "../context/AuthContext";
-import logoUrl from "../assets/SMEKSLogoLogin.png"; // 👈 import du logo
+import logoUrl from "../assets/SMEKSLogoLogin.png";
 
 export default function LoginPage() {
   const { login } = useContext(AuthContext);
@@ -170,6 +170,21 @@ export default function LoginPage() {
               )}
             </button>
           </form>
+
+          {/* --- Bloc Inscription agence --- */}
+          <div className="text-center mt-3">
+            <small className="text-muted d-block">Nouvelle agence ?</small>
+
+            
+
+             <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm mt-2"
+              onClick={() => navigate('/inscription-agence')}
+            >
+              Créer un compte agence
+            </button> 
+            </div>
 
           <div className="text-center mt-3">
             <small className="text-muted">Besoin d’aide ? Contactez votre administrateur.</small>

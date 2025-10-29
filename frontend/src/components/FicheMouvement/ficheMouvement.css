@@ -1,3 +1,74 @@
+/* ---- Zone centrale : pas de scroll horizontal ---- */
+.fm-page,
+.fm-wrap,
+.fm-body,
+.fm-col-left,
+.fm-col-right,
+.fm-sec,
+.fm-sec-body {
+  overflow-x: hidden;
+}
+
+/* Mise en page confortable */
+.fm-wrap { max-width: 1280px; margin: 0 auto; padding: 0 16px 24px; }
+.fm-col-left, .fm-col-right { min-width: 0; }
+
+/* Tables génériques (hors aperçu) : pas de débordement */
+.fm-table-lg table,
+.fm-sec .table {
+  width: 100%;
+  table-layout: fixed;
+}
+.fm-sec .table th, .fm-sec .table td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+/* ---------- APERÇU (exception : on autorise le scroll X ICI seulement) ---------- */
+.fm-preview {
+  overflow-x: auto;          /* <— seul endroit où on scrolle horizontalement */
+  border-top: 1px solid #e9ecef;
+}
+
+/* Le tableau d’aperçu doit pouvoir s’étaler en largeur */
+.fm-preview table {
+  width: max(1200px, 100%);  /* au moins 1200px pour garder des selects lisibles */
+  table-layout: auto;        /* laisse respirer les colonnes */
+}
+
+.fm-preview th,
+.fm-preview td {
+  white-space: nowrap;
+  vertical-align: middle;
+  padding: 6px 8px;
+}
+
+/* Les selects de mapping dans les entêtes */
+.fm-map-select {
+  min-width: 140px;
+  max-width: 200px;
+}
+@media (max-width: 1200px) {
+  .fm-map-select { min-width: 120px; }
+}
+
+/* Visuel de la 1re ligne d’entête (labels du fichier) */
+.fm-head-label {
+  font-weight: 600;
+  font-size: 12px;
+  color: #111827;
+}
+
+/* Rend l’entête d’aperçu sticky quand on scrolle verticalement */
+.fm-preview thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f8f9fa;
+}
+
 /* ===== Layout : grand tableau gauche + sidebar droite (sans scroll interne) ===== */
 .fm-body.twocol {
   display: grid;

@@ -1,34 +1,21 @@
 // src/components/FicheMouvement/useFicheMouvement.js
-import { useContext, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useContext, useEffect, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import api from "../../api";
 import { AuthContext } from "../../context/AuthContext";
 
-/** ========= Excel date/heure helpers ========= **/
-
-function toHHMM(any) {
-  if (any instanceof Date && !isNaN(any.getTime())) {
-    const hh = String(any.getHours()).padStart(2, "0");
-    const mm = String(any.getMinutes()).padStart(2, "0");
-    return `${hh}:${mm}`;
-  }
-  if (typeof any === "number") {
-    // fraction Excel (0..1) → HH:mm
-    const minutes = Math.round(any * 24 * 60);
-    const hh = String(Math.floor(minutes / 60)).padStart(2, "0");
-    const mm = String(minutes % 60).padStart(2, "0");
-    return `${hh}:${mm}`;
-  }
-  const d = safeDate(any);
-  if (d) return toHHMM(d);
-  // dernier recours : tenter HH:mm déjà présent en texte
-  const m = String(any || "").match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
-  return m ? `${m[1].padStart(2,"0")}:${m[2]}` : "";
-}
-
+/** ========= Helpers: dates / heures ========= **/
 
 const EXCEL_EPOCH = new Date(Date.UTC(1899, 11, 30));
+
+const safeDate = (v) => {
+  try {
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? null : d;
+  } catch {
+    return null;
+  }
+};
 function fromExcelDate(n) {
   if (typeof n !== "number" || !isFinite(n)) return null;
   const ms = Math.round(n * 86400000);
@@ -53,105 +40,11 @@ function toHM(dOrFraction) {
     const mm = String(minutes % 60).padStart(2, "0");
     return `${hh}:${mm}`;
   }
-  return "";
+  const m = String(dOrFraction || "").match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+  return m ? `${m[1].padStart(2, "0")}:${m[2]}` : "";
 }
-const safeDate = (v) => {
-  try {
-    const d = new Date(v);
-    return isNaN(d.getTime()) ? null : d;
-  } catch {
-    return null;
-  }
-};
 
-/** ========= Normalisation & dérivés ========= **/
-const normalizeDA = (val) => {
-  if (!val) return null;
-  const v = String(val).trim().toUpperCase();
-  if (["D", "DEPART", "DEPARTURE", "S", "SALIDA", "P", "PARTENZA"].includes(v)) return "D";
-  if (["A", "ARRIVEE", "ARRIVAL", "LLEGADA", "L"].includes(v)) return "A";
-  return null;
-};
-const deriveType = (d) => {
-  if (!d || typeof d !== "object") return null;
-  const hasDepart = !!d.heure_depart, hasArrivee = !!d.heure_arrivee;
-  if (hasDepart && !hasArrivee) return "D";
-  if (!hasDepart && hasArrivee) return "A";
-  return normalizeDA(d._type || d.type || d.da);
-};
-const getDateKey = (d) => {
-  if (!d || typeof d !== "object") return "";
-  const dtStr = d.heure_depart || d.heure_arrivee;
-  const dt = dtStr ? safeDate(dtStr) : null;
-  if (!dt) return "";
-  const y = dt.getFullYear();
-  const m = String(dt.getMonth() + 1).padStart(2, "0");
-  const day = String(dt.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-};
-const pickTO = (d) => {
-  if (!d || typeof d !== "object") return "";
-  if (d._to) return String(d._to).trim();
-  const to =
-    d.tour_operateur ??
-    d.to ??
-    d.t_o ??
-    d.TO ??
-    d["T.O."] ??
-    d["CLIENT/ TO"] ??
-    d["Client / TO"] ??
-    d.client_to ??
-    "";
-  return String(to || "").trim();
-};
-const pickRefTO = (d) => {
-  if (!d || typeof d !== "object") return "";
-  if (d._ref_to) return String(d._ref_to).trim();
-  const rto =
-    d.ref_to ?? d.ref_t_o ?? d["Ref.T.O."] ?? d.reference_to ?? d["REF T.O"] ?? d["Ref TO"] ?? d["Ntra.Ref"] ?? "";
-  return String(rto || "").trim();
-};
-const getFlightNo = (d, t) => {
-  if (!d) return "";
-  if (t === "A") return d.num_vol_arrivee || d.num_vol || d.vol || d["N° VOL"] || "";
-  if (t === "D") return d.num_vol_retour || d.num_vol || d.vol || d["N° VOL"] || "";
-  return d.num_vol_arrivee || d.num_vol_retour || d.num_vol || d.vol || d["N° VOL"] || "";
-};
-const getFlightTime = (d, t) =>
-  t === "A" ? d.heure_arrivee || "" : t === "D" ? d.heure_depart || "" : d.heure_arrivee || d.heure_depart || "";
-const getPaxForType = (d, t) =>
-  t === "A"
-    ? Number(d.nombre_personnes_arrivee || d.pax || 0)
-    : t === "D"
-    ? Number(d.nombre_personnes_retour || d.pax || 0)
-    : Number(d.nombre_personnes_arrivee || 0) + Number(d.nombre_personnes_retour || 0);
-export const getPaxDisplay = (d, t) => `${getPaxForType(d, t)} pax`;
-const formatRefFromDateKey = (dateKey) => (dateKey ? `M_${dateKey}` : null);
-const normalizeRows = (rows) =>
-  rows.map((d) => ({
-    ...d,
-    _type: deriveType(d),
-    _to: d?._to ?? pickTO(d),
-    _ref_to: d?._ref_to ?? pickRefTO(d),
-  }));
-export const rowKeyOf = (r, i) => String(r?.id ?? r?.reference ?? `row_${i}`);
-
-/** ========= Mapping manuel ========= **/
-export const TARGET_FIELDS = [
-  { key: "date", label: "Date *" },
-  { key: "heure", label: "Heure *" },
-  { key: "type", label: "D/A (optionnel)" }, // si manquant on choisira type après
-  { key: "aeroport_arrivee", label: "Aéroport Arrivée" },
-  { key: "aeroport_depart", label: "Aéroport Départ" },
-  { key: "num_vol", label: "N° Vol *" },
-  { key: "client_to", label: "Client / TO *" },
-  { key: "ville", label: "Ville/Zone" },
-  { key: "hotel", label: "Hôtel *" },
-  { key: "pax", label: "PAX *" },
-  { key: "client", label: "Client (Nom complet)" },
-  { key: "observation", label: "Observation" },
-];
-
+/** ========= Normalisation ========== **/
 const norm = (s) =>
   String(s || "")
     .toLowerCase()
@@ -160,90 +53,83 @@ const norm = (s) =>
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 
+const normalizeDA = (val) => {
+  if (!val) return "";
+  const v = String(val).trim().toUpperCase();
+  if (["D", "DEPART", "DEPARTURE", "S", "SALIDA", "P", "PARTENZA"].includes(v)) return "D";
+  if (["A", "ARRIVEE", "ARRIVAL", "LLEGADA", "L"].includes(v)) return "A";
+  return "";
+};
+
+/** ========= Champs cibles & mapping ========= **/
+export const TARGET_FIELDS = [
+  { key: "date", label: "Date" },
+  { key: "horaires", label: "Horaires" },
+  { key: "provenance", label: "Provenance" },
+  { key: "destination", label: "Destination" },
+  { key: "da", label: "DEPART/ARRIVER" },
+  { key: "num_vol", label: "N° Vol" },
+  { key: "client_to", label: "Client / TO" },
+  { key: "hotel", label: "Hotel" },
+  { key: "ref", label: "REF" },
+  { key: "titulaire", label: "Titulaire" },
+  { key: "pax", label: "Pax" },
+  { key: "adulte", label: "Adulte" },
+  { key: "enfants", label: "Enfants" },
+  { key: "bb_gratuit", label: "BB/GRATUIT" },
+  { key: "observation", label: "Observation" },
+  { key: "ville", label: "Ville" },
+  { key: "code_postal", label: "code postal" },
+];
+
+// Par défaut, on coche les requis “métier” habituels.
+// Tu peux modifier ce preset ; l’UI permet de les cocher/décocher.
+const DEFAULT_REQUIRED = {
+  date: true,
+  horaires: true,
+  provenance: false,
+  destination: false,
+  da: true,
+  num_vol: true,
+  client_to: true,
+  hotel: true,
+  ref: true,
+  titulaire: true,
+  pax: true,
+  adulte: false,
+  enfants: false,
+  bb_gratuit: false,
+  observation: false,
+  ville: false,
+  code_postal: false,
+};
+
 function autoDetectMapping(headers) {
   const H = headers.map((h) => ({ raw: h, n: norm(h) }));
-  const pick = (preds) => {
-    const hit = H.find(({ n }) => preds.some((p) => n.includes(p)));
-    return hit?.raw || "";
-  };
+  const pick = (preds) => H.find(({ n }) => preds.some((p) => n.includes(p)))?.raw || "";
+
   return {
-    date: pick(["date", "dia", "fecha"]),
-    heure: pick(["hora", "heure", "horaires", "time"]),
-    type: pick(["d a", "d/a", "l/s", "depart", "arrivee", "salida", "llegada"]),
-    aeroport_arrivee: pick(["arriv", "arrivee", "dst", "destination"]),
-    aeroport_depart: pick(["dep", "depart", "org", "origine", "origin"]),
-    num_vol: pick(["n vol", "vol", "vuelo", "flight"]),
-    client_to: pick(["client / to", "client to", "t o", "t.o", "to", "tour oper"]),
-    ville: pick(["ville", "ciudad", "zone"]),
-    hotel: pick(["hotel"]),
-    pax: pick(["pax", "adultes", "enfants"]),
-    client: pick(["titulaire", "titular", "nom", "voyageur", "client", "passager"]),
-    observation: pick(["observ", "comment"]),
+    date: pick(["date", "fecha", "jour", "dia"]),
+    horaires: pick(["heure", "horaire", "time", "hora", "h/v", "h v"]),
+    provenance: pick(["provenance", "origine", "origin", "from", "org"]),
+    destination: pick(["destination", "dest", "to", "dst"]),
+    da: pick(["depart", "arrive", "d a", "d/a", "llegada", "salida", "d a", "l s", "ls", "d/a"]),
+    num_vol: pick(["vol", "flight", "n vol", "n° vol", "vuelo", "nº vol"]),
+    client_to: pick(["client to", "to", "tour oper", "t o", "t.o", "client / to", "client/ to"]),
+    hotel: pick(["hotel", "hôtel"]),
+    ref: pick(["ref", "reference", "référence", "ntra.ref", "ref t.o.", "ref to"]),
+    titulaire: pick(["titulaire", "titular", "voyageur", "passager", "client", "nom", "tetulaire"]),
+    pax: pick(["pax", "personnes", "passagers", "qt pax", "passengers"]),
+    adulte: pick(["adulte", "adultes", "adults", "adultos"]),
+    enfants: pick(["enfant", "enfants", "kids", "child", "children", "niños", "ninos"]),
+    bb_gratuit: pick(["bb", "bebe", "gratuit", "infant", "baby"]),
+    observation: pick(["observ", "comment", "remark", "notes"]),
+    ville: pick(["ville", "city", "ciudad", "zone"]),
+    code_postal: pick(["code postal", "postal", "zip"]),
   };
 }
 
-function applyMappingToRows(allRows, mapping) {
-  // On renomme/compose un objet normalisé minimum > sera re-parsé par backend ensuite
-  return allRows.map((r) => {
-    const g = (k) => {
-      const hdr = mapping[k];
-      return hdr ? r[hdr] : "";
-    };
-    // conversions date/heure
-    let dateStr = g("date");
-    if (dateStr instanceof Date) dateStr = toYMD(dateStr);
-    else if (typeof dateStr === "number") dateStr = toYMD(fromExcelDate(dateStr) || new Date(NaN));
-    else {
-      const dt = safeDate(dateStr);
-      dateStr = dt ? toYMD(dt) : String(dateStr || "");
-    }
-
-    let heureStr = g("heure");
-    if (heureStr instanceof Date) heureStr = toHM(heureStr);
-    else if (typeof heureStr === "number") heureStr = toHM(heureStr);
-    else heureStr = String(heureStr || "");
-
-    const da = normalizeDA(g("type"));
-    const aeroport_arrivee = String(g("aeroport_arrivee") || "").trim();
-    const aeroport_depart = String(g("aeroport_depart") || "").trim();
-    const num_vol = String(g("num_vol") || "").trim();
-    const client_to = String(g("client_to") || "").trim();
-    const ville = String(g("ville") || "").trim();
-    const hotel = String(g("hotel") || "").trim();
-    const client = String(g("client") || "").trim();
-    const observation = String(g("observation") || "").trim();
-    const pax = Number(g("pax") || 0) || 0;
-
-    // On pose heure_arrivee/heure_depart en fonction du type si connu (sinon backend tranchera)
-    const out = {
-      date: dateStr,
-      heure_brut: heureStr,
-      _type: da,
-      aeroport_arrivee,
-      aeroport_depart,
-      num_vol,
-      _to: client_to,
-      ville,
-      hotel,
-      client,
-      observation,
-      pax,
-    };
-    if (da === "A") {
-      out.heure_arrivee = `${dateStr} ${heureStr}`.trim();
-      out.nombre_personnes_arrivee = pax;
-    } else if (da === "D") {
-      out.heure_depart = `${dateStr} ${heureStr}`.trim();
-      out.nombre_personnes_retour = pax;
-    } else {
-      // inconnu : on conserve l'heure brute
-      out.heure = `${dateStr} ${heureStr}`.trim();
-    }
-    return out;
-  });
-}
-
-/** ========= Parseur local pour l’aperçu ========= **/
+/** ========= Fichier ========= **/
 async function parseExcelFile(file) {
   const buf = await file.arrayBuffer();
   let wb;
@@ -255,539 +141,347 @@ async function parseExcelFile(file) {
   if (!wb.SheetNames?.length) throw new Error("Classeur vide.");
   const ws = wb.Sheets[wb.SheetNames[0]];
   if (!ws) throw new Error("Première feuille introuvable.");
-
-  let rows = XLSX.utils.sheet_to_json(ws, { defval: "", blankrows: false });
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: "", blankrows: false });
   const headers = Object.keys(rows[0] || {});
-
-  // correction date/heure visible (sans altérer les clés)
-  const dateCols = headers.filter((h) => /^(date|dia|fecha)/i.test(h));
-  const timeCols = headers.filter((h) => /^(hora|heure|horaires|time)/i.test(h));
-  const visRows = rows.slice(0, 10).map((r) => {
-    const out = { ...r };
-    dateCols.forEach((h) => {
-      const v = out[h];
-      if (v instanceof Date) out[h] = toYMD(v);
-      else if (typeof v === "number") out[h] = toYMD(fromExcelDate(v) || new Date(NaN)) || String(v);
-      else {
-        const d = safeDate(v);
-        out[h] = d ? toYMD(d) : String(v || "");
-      }
-    });
-    timeCols.forEach((h) => {
-      const v = out[h];
-      if (v instanceof Date) out[h] = toHM(v);
-      else if (typeof v === "number") out[h] = toHM(v);
-      else out[h] = String(v || "");
-    });
-    return out;
-  });
-
-  return { headers, rowsTop10: visRows, allRows: rows };
+  return { headers, rows, filename: file.name || "" };
 }
 
-/** ================= Hook principal ================= **/
-export function useFicheMouvement() {
-  const navigate = useNavigate();
-  const params = useParams();
-  const { user: ctxUser } = useContext(AuthContext) || {};
-  const user = ctxUser || null;
-  const currentAgenceId = params.agence_id || user?.agence_id || "";
+/** ========= Normalisation ligne ========= **/
+function normalizeRow(raw, map) {
+  const g = (k) => {
+    const hdr = map?.[k];
+    return hdr ? raw[hdr] : "";
+  };
 
-  // Données métier
-  const [rows, setRows] = useState([]);
-  const [typeSel, setTypeSel] = useState(null);
-  const [dateSel, setDateSel] = useState("");
-  const [airportSel, setAirportSel] = useState("");
-  const [flightsSel, setFlightsSel] = useState([]);
-  const [tosSel, setTosSel] = useState([]);
-  const [villesSel, setVillesSel] = useState([]);
-  const [hotelsSel, setHotelsSel] = useState([]);
-  const [selectedDossierIds, setSelectedDossierIds] = useState(() => new Set());
-  const [openObs, setOpenObs] = useState(() => new Set());
+  // Date indépendante (on ne la colle pas à l’heure)
+  let dateStr = g("date");
+  if (dateStr instanceof Date) dateStr = toYMD(dateStr);
+  else if (typeof dateStr === "number") dateStr = toYMD(fromExcelDate(dateStr) || new Date(NaN));
+  else {
+    const d = safeDate(dateStr);
+    dateStr = d ? toYMD(d) : String(dateStr || "");
+  }
 
-  const [msg, setMsg] = useState("Importez un fichier pour commencer.");
-  const [creating, setCreating] = useState(false);
-  const [movementName, setMovementName] = useState("");
-  const [loading, setLoading] = useState(false);
+  // Heure seule HH:mm
+  let heureStr = g("horaires");
+  if (heureStr instanceof Date || typeof heureStr === "number") heureStr = toHM(heureStr);
+  else heureStr = toHM(heureStr) || String(heureStr || "");
 
-  // langues
-  const [selectedLanguage, setSelectedLanguage] = useState("fr");
-  const [languages, setLanguages] = useState([]);
+  const da = normalizeDA(g("da"));
 
-  // Aperçu + mapping
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewHeaders, setPreviewHeaders] = useState([]);
-  const [previewRows, setPreviewRows] = useState([]);
-  const [previewError, setPreviewError] = useState("");
-  const [parsing, setParsing] = useState(false);
-  const [selectedFile, setSelectedFile] = useState(null);
+  const pax = Number(g("pax") || 0) || 0;
+  const adulte = Number(g("adulte") || 0) || 0;
+  const enfants = Number(g("enfants") || 0) || 0;
+  const bb = Number(g("bb_gratuit") || 0) || 0;
 
-  const [headerMap, setHeaderMap] = useState({}); // {fieldKey: headerName}
-  const [hasImported, setHasImported] = useState(false);
+  return {
+    date: dateStr,
+    horaires: heureStr,
+    provenance: String(g("provenance") || "").trim(),
+    destination: String(g("destination") || "").trim(),
+    da,
+    num_vol: String(g("num_vol") || "").trim(),
+    client_to: String(g("client_to") || "").trim(),
+    hotel: String(g("hotel") || "").trim(),
+    ref: String(g("ref") || "").trim(),
+    titulaire: String(g("titulaire") || "").trim(),
+    pax,
+    adulte,
+    enfants,
+    bb_gratuit: bb,
+    observation: String(g("observation") || "").trim(),
+    ville: String(g("ville") || "").trim(),
+    code_postal: String(g("code_postal") || "").trim(),
+  };
+}
 
-  const tCode = typeSel === "arrivee" ? "A" : typeSel === "depart" ? "D" : null;
-  const toggleObs = (key) =>
-    setOpenObs((prev) => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
+/** ========= Validation ========= **/
+function validateRow(row, requiredMap) {
+  const msgs = [];
 
-  /* Langues */
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await api.get("languages/");
-        const langs = Array.isArray(res.data) ? res.data : [];
-        setLanguages(langs);
-        if (langs.length && !langs.find((l) => l.code === selectedLanguage)) {
-          setSelectedLanguage(langs[0].code);
-        }
-      } catch {
-        setLanguages([]);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  /* Options (calculées depuis rows) */
-  const dateOptions = useMemo(() => {
-    if (!rows.length) return [];
-    const map = new Map();
-    const src = tCode ? rows.filter((r) => r._type === tCode) : rows;
-    src.forEach((r) => {
-      const dk = getDateKey(r);
-      if (!dk) return;
-      const entry = map.get(dk) || { label: dk, count: 0 };
-      entry.count += 1;
-      map.set(dk, entry);
-    });
-    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
-  }, [rows, tCode]);
-
-  const airportOptions = useMemo(() => {
-    if (!rows.length || !tCode || !dateSel) return [];
-    const map = new Map();
-    rows
-      .filter((r) => r._type === tCode)
-      .filter((r) => getDateKey(r) === dateSel)
-      .forEach((r) => {
-        const val = tCode === "D" ? (r.aeroport_depart || "").trim() : (r.aeroport_arrivee || "").trim();
-        if (!val) return;
-        const entry = map.get(val) || { label: val, count: 0 };
-        entry.count += 1;
-        map.set(val, entry);
-      });
-    return Array.from(map.values()).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-  }, [rows, tCode, dateSel]);
-
-const flightOptions = useMemo(() => {
-  if (!rows.length || !tCode || !dateSel || !airportSel) return [];
-  const map = new Map();
-
-  rows
-    .filter((r) => r._type === tCode)
-    .filter((r) => getDateKey(r) === dateSel)
-    .filter((r) =>
-      tCode === "D"
-        ? (r.aeroport_depart || "").trim() === airportSel
-        : (r.aeroport_arrivee || "").trim() === airportSel
-    )
-    .forEach((r) => {
-      const flight = getFlightNo(r, tCode) || "—";
-      const rawTime = getFlightTime(r, tCode);
-      const time = toHHMM(rawTime); // ← un seul horaire normalisé
-      const pax = getPaxForType(r, tCode);
-
-      const entry =
-        map.get(flight) ||
-        { flight, timeCounts: new Map(), pax: 0, count: 0 };
-      if (time) {
-        entry.timeCounts.set(time, (entry.timeCounts.get(time) || 0) + 1);
-      }
-      entry.pax += pax;
-      entry.count += 1;
-      map.set(flight, entry);
-    });
-
-  // choisir l’horaire majoritaire pour chaque vol
-  const opts = Array.from(map.values()).map((e) => {
-    let bestTime = "";
-    let bestCount = -1;
-    e.timeCounts.forEach((cnt, t) => {
-      if (cnt > bestCount || (cnt === bestCount && t < bestTime)) {
-        bestCount = cnt;
-        bestTime = t;
-      }
-    });
-    return { flight: e.flight, time: bestTime, pax: e.pax, count: e.count };
+  TARGET_FIELDS.forEach(({ key, label }) => {
+    if (requiredMap?.[key]) {
+      const v = row[key];
+      const empty =
+        v === null || v === undefined || String(v).trim() === "" || (typeof v === "number" && isNaN(v));
+      if (empty) msgs.push(`${label} manquant(e)`);
+    }
   });
 
-  return opts.sort((a, b) => b.pax - a.pax || a.flight.localeCompare(b.flight));
-}, [rows, tCode, dateSel, airportSel]);
+  if (row.date && !/^\d{4}-\d{2}-\d{2}$/.test(row.date)) msgs.push("Date invalide (YYYY-MM-DD)");
+  if (row.horaires && !/^\d{2}:\d{2}$/.test(row.horaires)) msgs.push("Horaires invalide (HH:mm)");
+  if (row.da && !["A", "D"].includes(row.da)) msgs.push("DEPART/ARRIVER invalide (A ou D)");
 
-
-
-  const toOptions = useMemo(() => {
-    if (!rows.length || !tCode || !dateSel || !airportSel || flightsSel.length === 0) return [];
-    const map = new Map();
-    rows
-      .filter((r) => r._type === tCode)
-      .filter((r) => getDateKey(r) === dateSel)
-      .filter((r) =>
-        tCode === "D" ? (r.aeroport_depart || "").trim() === airportSel : (r.aeroport_arrivee || "").trim() === airportSel
-      )
-      .filter((r) => flightsSel.includes(getFlightNo(r, tCode) || "—"))
-      .forEach((r) => {
-        const to = r._to || "";
-        if (!to) return;
-        const pax = getPaxForType(r, tCode);
-        const entry = map.get(to) || { to, pax: 0, count: 0 };
-        entry.pax += pax;
-        entry.count += 1;
-        map.set(to, entry);
-      });
-    return Array.from(map.values()).sort((a, b) => b.pax - a.pax);
-  }, [rows, tCode, dateSel, airportSel, flightsSel]);
-
-  const villeOptions = useMemo(() => {
-    if (!rows.length || !tCode || !dateSel || !airportSel || flightsSel.length === 0) return [];
-    let filtered = rows
-      .filter((r) => r._type === tCode)
-      .filter((r) => getDateKey(r) === dateSel)
-      .filter((r) =>
-        tCode === "D" ? (r.aeroport_depart || "").trim() === airportSel : (r.aeroport_arrivee || "").trim() === airportSel
-      )
-      .filter((r) => flightsSel.includes(getFlightNo(r, tCode) || "—"));
-    if (tosSel.length > 0) {
-      const st = new Set(tosSel);
-      filtered = filtered.filter((r) => r._to && st.has(r._to));
+  ["pax", "adulte", "enfants", "bb_gratuit"].forEach((k) => {
+    if (String(row[k] ?? "").trim() !== "") {
+      const n = Number(row[k]);
+      if (!Number.isFinite(n) || n < 0) msgs.push(`${k} invalide (nombre ≥ 0)`);
     }
-    const map = new Map();
-    filtered.forEach((r) => {
-      const ville = (r.ville || "").toString().trim() || "—";
-      const pax = getPaxForType(r, tCode);
-      const entry = map.get(ville) || { ville, pax: 0, count: 0 };
-      entry.pax += pax;
-      entry.count += 1;
-      map.set(ville, entry);
-    });
-    return Array.from(map.values()).sort((a, b) => b.pax - a.pax);
-  }, [rows, tCode, dateSel, airportSel, flightsSel, tosSel]);
+  });
 
-  const hotelOptions = useMemo(() => {
-    if (!rows.length || !tCode || !dateSel || !airportSel || flightsSel.length === 0) return [];
-    let filtered = rows
-      .filter((r) => r._type === tCode)
-      .filter((r) => getDateKey(r) === dateSel)
-      .filter((r) =>
-        tCode === "D" ? (r.aeroport_depart || "").trim() === airportSel : (r.aeroport_arrivee || "").trim() === airportSel
-      )
-      .filter((r) => flightsSel.includes(getFlightNo(r, tCode) || "—"));
-    if (tosSel.length > 0) {
-      const st = new Set(tosSel);
-      filtered = filtered.filter((r) => r._to && st.has(r._to));
-    }
-    if (villesSel.length > 0) {
-      const sv = new Set(villesSel.map((x) => String(x).trim()));
-      filtered = filtered.filter((r) => sv.has((r.ville || "").toString().trim() || "—"));
-    }
-    const map = new Map();
-    filtered.forEach((r) => {
-      const hotel =
-        (typeof r.hotel_nom === "string" && r.hotel_nom) ||
-        (typeof r.hotel_name === "string" && r.hotel_name) ||
-        (typeof r.hotel === "string" && r.hotel) ||
-        (r.hotel && r.hotel.nom) ||
-        "(Sans hôtel)";
-      const pax = getPaxForType(r, tCode);
-      const entry = map.get(hotel) || { hotel, pax: 0, count: 0 };
-      entry.pax += pax;
-      entry.count += 1;
-      map.set(hotel, entry);
-    });
-    return Array.from(map.values()).sort((a, b) => b.pax - a.pax);
-  }, [rows, tCode, dateSel, airportSel, flightsSel, tosSel, villesSel]);
+  return msgs;
+}
 
-  /* Auto-sélections */
-  useEffect(() => {
-    if (!tCode) return;
-    if (!dateSel && dateOptions.length === 1) setDateSel(dateOptions[0].label);
-  }, [tCode, dateSel, dateOptions]);
-  useEffect(() => {
-    if (!dateSel) return;
-    if (!airportSel && airportOptions.length === 1) setAirportSel(airportOptions[0].label);
-  }, [dateSel, airportSel, airportOptions]);
-  useEffect(() => {
-    if (!airportSel) return;
-    if (flightsSel.length === 0 && flightOptions.length === 1) setFlightsSel([flightOptions[0].flight]);
-  }, [airportSel, flightsSel.length, flightOptions]);
-  useEffect(() => {
-    if (!flightsSel.length) return;
-    if (!tosSel.length && toOptions.length === 1) setTosSel([toOptions[0].to]);
-  }, [flightsSel.length, tosSel.length, toOptions]);
-  useEffect(() => {
-    if (!tosSel.length) return;
-    if (!villesSel.length && villeOptions.length === 1) setVillesSel([villeOptions[0].ville]);
-  }, [tosSel.length, villesSel.length, villeOptions]);
-  useEffect(() => {
-    if (!villesSel.length) return;
-    if (!hotelsSel.length && hotelOptions.length === 1) setHotelsSel([hotelOptions[0].hotel]);
-  }, [villesSel.length, hotelsSel.length, hotelOptions]);
+/** ========= Hook ========= **/
+export function useFicheMouvement() {
+  const { user: ctxUser } = useContext(AuthContext) || {};
+  const user = ctxUser || null;
 
-  /* Filtrage */
-  const filteredRecords = useMemo(() => {
-    if (!tCode || !dateSel || !airportSel || flightsSel.length === 0) return [];
-    let filtered = rows
-      .filter((r) => r._type === tCode)
-      .filter((r) => getDateKey(r) === dateSel)
-      .filter((r) =>
-        tCode === "D" ? (r.aeroport_depart || "").trim() === airportSel : (r.aeroport_arrivee || "").trim() === airportSel
-      )
-      .filter((r) => flightsSel.includes(getFlightNo(r, tCode) || "—"));
+  const [msg, setMsg] = useState("Importez un fichier pour commencer.");
+  const [loading, setLoading] = useState(false);
 
-    if (tosSel.length > 0) {
-      const st = new Set(tosSel);
-      filtered = filtered.filter((r) => r._to && st.has(r._to));
-    }
-    if (villesSel.length > 0) {
-      const sv = new Set(villesSel.map((x) => String(x).trim()));
-      filtered = filtered.filter((r) => sv.has((r.ville || "").toString().trim() || "—"));
-    }
-    if (hotelsSel.length > 0) {
-      const sh = new Set(hotelsSel.map((x) => String(x).trim()));
-      filtered = filtered.filter((r) => {
-        const hotel =
-          (typeof r.hotel_nom === "string" && r.hotel_nom) ||
-          (typeof r.hotel_name === "string" && r.hotel_name) ||
-          (typeof r.hotel === "string" && r.hotel) ||
-          (r.hotel && r.hotel.nom) ||
-          "(Sans hôtel)";
-        return sh.has(String(hotel).trim());
-      });
-    }
-    return filtered;
-  }, [rows, tCode, dateSel, airportSel, flightsSel, tosSel, villesSel, hotelsSel]);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [filename, setFilename] = useState("");
+  const [headers, setHeaders] = useState([]);
+  const [allRows, setAllRows] = useState([]);
 
-  useEffect(() => {
-    const next = new Set(filteredRecords.map((r) => r.id).filter(Boolean));
-    setSelectedDossierIds(next);
-  }, [filteredRecords]);
+  const [headerMap, setHeaderMap] = useState({});
+  const [requiredMap, setRequiredMap] = useState(DEFAULT_REQUIRED);
+  const [ignoreErrors, setIgnoreErrors] = useState(false);
 
-  const selectedCount = useMemo(() => Array.from(selectedDossierIds).length, [selectedDossierIds]);
-  const selectedRows = useMemo(
-    () => filteredRecords.filter((r) => selectedDossierIds.has(r.id)),
-    [filteredRecords, selectedDossierIds]
-  );
-  const selectedPax = useMemo(
-    () => selectedRows.reduce((acc, r) => acc + getPaxForType(r, tCode), 0),
-    [selectedRows, tCode]
-  );
-  const obsCount = useMemo(
-    () => selectedRows.reduce((acc, r) => acc + (r.observation && String(r.observation).trim() ? 1 : 0), 0),
-    [selectedRows]
-  );
+  const [mappedPreview, setMappedPreview] = useState([]);
+  const [validationErrors, setValidationErrors] = useState([]); // [{index, messages[]}]
+  const [emptyRowIdxs, setEmptyRowIdxs] = useState([]); // index lignes vides
 
-  /** ========== Import: étape 1 (choix fichier) → Aperçu + auto-mapping ========== **/
+  const [lastValidatedRows, setLastValidatedRows] = useState([]);
+
+  const currentAgenceId = user?.agence_id || null;
+  const initialTotalRef = useRef(0);
+
   const onFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setSelectedFile(file);
-    setMsg("");
-    setTypeSel(null);
-    setDateSel("");
-    setAirportSel("");
-    setFlightsSel([]);
-    setTosSel([]);
-    setVillesSel([]);
-    setHotelsSel([]);
-    setSelectedDossierIds(new Set());
-    setOpenObs(new Set());
-    setPreviewOpen(false);
-    setPreviewHeaders([]);
-    setPreviewRows([]);
-    setPreviewError("");
+    setMsg("Fichier chargé. Configurez le mapping puis cliquez sur Valider.");
 
     try {
       setLoading(true);
-      setParsing(true);
-      const { headers, rowsTop10 } = await parseExcelFile(file);
-      setPreviewHeaders(headers);
-      setPreviewRows(rowsTop10);
-      setHeaderMap(autoDetectMapping(headers)); // auto
-      setPreviewOpen(true);
+      const { headers, rows, filename } = await parseExcelFile(file);
+      setHeaders(headers);
+      setAllRows(rows);
+      setFilename(filename || file.name || "");
+      initialTotalRef.current = rows.length;
+
+      const auto = autoDetectMapping(headers);
+      setHeaderMap(auto);
+
+      setMappedPreview(rows.slice(0, 3).map((r) => normalizeRow(r, auto)));
+
+      setValidationErrors([]);
+      setEmptyRowIdxs([]);
+      setLastValidatedRows([]);
     } catch (err) {
-      setPreviewOpen(false);
-      setPreviewHeaders([]);
-      setPreviewRows([]);
-      setPreviewError("");
-      const m = err?.message || "Impossible de lire ce fichier (XLS/XLSX).";
-      setMsg(m);
+      setHeaders([]);
+      setAllRows([]);
+      setMsg(err?.message || "Impossible de lire ce fichier.");
     } finally {
-      setParsing(false);
       setLoading(false);
       if (e?.target) e.target.value = "";
     }
   };
 
-  /** ========== Import: étape 2 (confirmer) — auto ou avec mapping ========== **/
-  const confirmImport = async (mode = "auto") => {
-    if (!selectedFile) return;
+  useEffect(() => {
+    if (!allRows.length) {
+      setMappedPreview([]);
+      return;
+    }
+    setMappedPreview(allRows.slice(0, 3).map((r) => normalizeRow(r, headerMap)));
+  }, [allRows, headerMap]);
+
+  const runValidation = () => {
+    if (!allRows.length) {
+      setMsg("Aucun contenu à valider.");
+      return;
+    }
+    const mapped = allRows.map((r) => normalizeRow(r, headerMap));
+    setLastValidatedRows(mapped);
+
+    const errors = [];
+    const empties = [];
+
+    mapped.forEach((row, i) => {
+      const allEmpty = TARGET_FIELDS.every(({ key }) => {
+        const v = row[key];
+        return v === null || v === undefined || String(v).trim() === "";
+      });
+      if (allEmpty) {
+        empties.push(i);
+        return;
+      }
+      const msgs = validateRow(row, requiredMap);
+      if (msgs.length) errors.push({ index: i, messages: msgs });
+    });
+
+    setValidationErrors(errors);
+    setEmptyRowIdxs(empties);
+
+    if (errors.length === 0) {
+      const info = [];
+      if (empties.length) info.push(`${empties.length} ligne(s) vide(s) ignorée(s)`);
+      setMsg(`Validation OK — aucune erreur. ${info.join(" • ")}`);
+    } else {
+      setMsg(
+        `Erreurs détectées : ${errors.length} ligne(s) en anomalie${
+          empties.length ? ` • ${empties.length} vide(s) ignorée(s)` : ""
+        }.`
+      );
+    }
+  };
+
+  /** Enregistrement :
+   *  - si ignoreErrors === false : on envoie uniquement les lignes valides
+   *  - si ignoreErrors === true  : on envoie toutes les lignes non vides (même en anomalie)
+   *  Le backend recevra mapping, required_fields, ignore_errors
+   */
+  const saveAll = async () => {
+    if (!selectedFile) {
+      setMsg("Aucun fichier sélectionné.");
+      return;
+    }
+    if (!currentAgenceId) {
+      setMsg("Agence inconnue.");
+      return;
+    }
+
     try {
       setLoading(true);
-      setMsg("");
-      const form = new FormData();
-      form.append("file", selectedFile);
-      if (currentAgenceId) form.append("agence", currentAgenceId);
-      form.append("langue", selectedLanguage || "fr");
-      if (mode === "manual") form.append("mapping", JSON.stringify(headerMap || {}));
 
-      // On envoie au backend (source de vérité)
-      const res = await api.post("importer-dossier/", form, { headers: { "Content-Type": "multipart/form-data" } });
+      // 1) Calcul (ré)validation locale si besoin
+      let mapped = lastValidatedRows;
+      let errors = validationErrors;
+      let empties = emptyRowIdxs;
 
-      // On alimente le front avec la réponse
-      const listRaw =
-        (Array.isArray(res.data?.dossiers) && res.data.dossiers) ||
-        [].concat(res.data?.dossiers_crees || [], res.data?.dossiers_mis_a_jour || []);
-
-      let list = Array.isArray(listRaw) ? listRaw : [];
-
-      // Si backend ignore "mapping", on applique le mapping localement pour que l’UI marche
-      if (mode === "manual" && (!list.length || typeof list[0] !== "object")) {
-        const parsed = await parseExcelFile(selectedFile);
-        list = applyMappingToRows(parsed.allRows || [], headerMap || {});
+      if (!mapped.length) {
+        mapped = allRows.map((r) => normalizeRow(r, headerMap));
+        const tmpErr = [];
+        const tmpEmpty = [];
+        mapped.forEach((row, i) => {
+          const allEmpty = TARGET_FIELDS.every(({ key }) => {
+            const v = row[key];
+            return v === null || v === undefined || String(v).trim() === "";
+          });
+          if (allEmpty) {
+            tmpEmpty.push(i);
+          } else {
+            const msgs = validateRow(row, requiredMap);
+            if (msgs.length) tmpErr.push({ index: i, messages: msgs });
+          }
+        });
+        errors = tmpErr;
+        empties = tmpEmpty;
+        setValidationErrors(tmpErr);
+        setEmptyRowIdxs(tmpEmpty);
+        setLastValidatedRows(mapped);
       }
 
-      const normalized = normalizeRows(list);
-      setRows(normalized);
-      setHasImported(true);
+      // 2) Sélection des lignes à envoyer
+      const empty = new Set(empties);
+      let toSend = mapped
+        .map((row, __idx) => ({ ...row, __idx }))
+        .filter((r) => !empty.has(r.__idx));
 
-      const total = normalized.length;
-      const crees = res.data?.dossiers_crees?.length || 0;
-      const maj = res.data?.dossiers_mis_a_jour?.length || 0;
-      setMsg(`Import OK — ${crees} créé(s), ${maj} MAJ, total ${total}.`);
-      setPreviewOpen(false);
+      if (!ignoreErrors) {
+        const bad = new Set(errors.map((e) => e.index));
+        toSend = toSend.filter((r) => !bad.has(r.__idx));
+      }
+
+      toSend = toSend.map(({ __idx, ...rest }) => rest);
+
+      if (!toSend.length) {
+        setMsg("Aucune ligne à enregistrer (toutes vides ou invalides).");
+        return;
+      }
+
+      // 3) Construire le FormData attendu par le backend
+      const requiredKeysArray = Object.entries(requiredMap)
+        .filter(([_, isReq]) => !!isReq)
+        .map(([k]) => k);
+
+      const form = new FormData();
+      form.append("file", selectedFile);
+      form.append("agence", currentAgenceId);
+      form.append("mapping", JSON.stringify(headerMap));               // { date: "DATE", horaires: "H/V", ... }
+      form.append("required_fields", JSON.stringify(requiredKeysArray)); // ["date","horaires",...]
+      form.append("ignore_errors", ignoreErrors ? "true" : "false");
+      // (facultatif, utile au back si tu veux)
+      form.append("filename", filename || selectedFile.name || "");
+      form.append("total_rows_client", String(initialTotalRef.current || toSend.length));
+
+      // 4) Appel API
+      const res = await api.post("importer-dossier/", form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      // 5) Feedback
+      const created = Number(res?.data?.created_count ?? res?.data?.created ?? 0);
+      const updated = Number(res?.data?.updated_count ?? res?.data?.updated ?? 0);
+
+      const ignoredCountLocal = ignoreErrors
+        ? empties.length // on a quand même ignoré les totalement vides
+        : (errors?.length || 0) + (empties?.length || 0);
+
+      setMsg(
+        `Enregistrement terminé — ${created} créé(s), ${updated} mis à jour. ` +
+          `${toSend.length} ligne(s) envoyées, ${ignoredCountLocal} ignorée(s) côté client.`
+      );
     } catch (err) {
       const m =
         err?.response?.data?.detail ||
         err?.response?.data?.error ||
         err?.message ||
-        "Erreur lors de l'importation.";
+        "Erreur lors de l’enregistrement.";
       setMsg(m);
     } finally {
       setLoading(false);
     }
   };
 
-  const cancelPreview = () => {
-    setPreviewOpen(false);
-    setPreviewHeaders([]);
-    setPreviewRows([]);
-    setPreviewError("");
-    setSelectedFile(null);
-  };
-
-  const clearImport = () => {
-    setRows([]);
-    setTypeSel(null);
-    setDateSel("");
-    setAirportSel("");
-    setFlightsSel([]);
-    setTosSel([]);
-    setVillesSel([]);
-    setHotelsSel([]);
-    setSelectedDossierIds(new Set());
-    setOpenObs(new Set());
-    setHasImported(false);
-    cancelPreview();
+  const clearAll = () => {
     setMsg("Importez un fichier pour commencer.");
-  };
-
-  /** ========== Création fiche ========== **/
-  const onCreate = async () => {
-    setMsg("");
-    if (!currentAgenceId) {
-      setMsg("Agence inconnue.");
-      return;
-    }
-    if (!tCode || !dateSel || !airportSel) {
-      setMsg("Complétez Type, Date et Aéroport.");
-      return;
-    }
-    if (selectedCount === 0) {
-      setMsg("Aucun dossier sélectionné.");
-      return;
-    }
-
-    const selRows = filteredRecords.filter((r) => selectedDossierIds.has(r.id));
-    const payload = {
-      agence: currentAgenceId,
-      name: (movementName || "").trim(),
-      type: tCode,
-      date: dateSel,
-      aeroport: airportSel,
-      dossier_ids: selRows.map((r) => r.id).filter(Boolean),
-      reference: formatRefFromDateKey(dateSel),
-      tour_operateurs: Array.from(new Set(selRows.map((r) => r._to).filter(Boolean))),
-      villes: Array.from(new Set(selRows.map((r) => (r.ville || "").trim() || "—").filter(Boolean))),
-    };
-
-    try {
-      setCreating(true);
-      await api.post("creer-fiche-mouvement/", payload);
-      setMsg("Fiche créée.");
-      navigate(`/agence/${currentAgenceId}/fiches-mouvement`, { replace: true });
-    } catch (err) {
-      const m = err?.response?.data?.detail || err?.response?.data?.error || "Erreur lors de la création.";
-      setMsg(m);
-    } finally {
-      setCreating(false);
-    }
+    setLoading(false);
+    setSelectedFile(null);
+    setFilename("");
+    setHeaders([]);
+    setAllRows([]);
+    setHeaderMap({});
+    setRequiredMap(DEFAULT_REQUIRED);
+    setIgnoreErrors(false);
+    setMappedPreview([]);
+    setValidationErrors([]);
+    setEmptyRowIdxs([]);
+    setLastValidatedRows([]);
   };
 
   return {
-    // state exposé
-    rows, setRows,
-    typeSel, setTypeSel,
-    dateSel, setDateSel,
-    airportSel, setAirportSel,
-    flightsSel, setFlightsSel,
-    tosSel, setTosSel,
-    villesSel, setVillesSel,
-    hotelsSel, setHotelsSel,
-    selectedDossierIds, setSelectedDossierIds,
-    openObs, toggleObs,
-    msg, setMsg,
-    creating, movementName, setMovementName,
+    // état & infos
+    msg,
     loading,
-    selectedLanguage, setSelectedLanguage,
-    languages: Array.isArray(languages) ? languages : [],
-    hasImported,
+    currentAgenceId,
 
-    // aperçu + mapping
-    previewOpen, previewHeaders, previewRows, previewError, parsing,
     selectedFile,
-    headerMap, setHeaderMap,
+    filename,
+    headers,
+    allRows,
+
+    // mapping + requis + ignore
+    headerMap,
+    setHeaderMap,
+    requiredMap,
+    setRequiredMap,
+    ignoreErrors,
+    setIgnoreErrors,
     TARGET_FIELDS,
 
-    // dérivés
-    tCode,
-    dateOptions, airportOptions, flightOptions,
-    toOptions, villeOptions, hotelOptions,
-    filteredRecords,
-    selectedCount, selectedPax, obsCount,
+    // aperçu / erreurs
+    mappedPreview,
+    validationErrors,
+    emptyRowIdxs,
+    lastValidatedRows,
 
     // actions
     onFile,
-    confirmImport,
-    cancelPreview,
-    clearImport,
-    onCreate,
-
-    // utils
-    getPaxDisplay,
-    rowKeyOf,
-    currentAgenceId,
-    navigate,
+    runValidation,
+    saveAll,
+    clearAll,
   };
 }
