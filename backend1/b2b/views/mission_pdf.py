@@ -1,388 +1,639 @@
-# b2b/views/mission_pdf.py
+# backend1/b2b/views/mission_pdf.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
+
+import re
 from io import BytesIO
-from datetime import timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from django.http import FileResponse
-from django.utils.timezone import localtime
+from django.core.files.storage import default_storage
+from django.utils.dateparse import parse_datetime
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
-from reportlab.pdfgen import canvas
 from reportlab.lib import colors
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Table,
+    TableStyle,
+    Paragraph,
+    Spacer,
+    Image,
+)
+from reportlab.platypus.tables import LongTable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
 
-# ------------------------------- Helpers basiques -------------------------------
 
-def _safe_str(v, default="—"):
-    return (str(v).strip() if v is not None and str(v).strip() else default)
+# ============================================================
+# Config (look & feel like your screenshot)
+# ============================================================
 
-def _fmt_dt(dt):
+# Header background (light blue like the screenshot)
+HEADER_BLUE = colors.HexColor("#D7E7F7")
+# Borders
+BORDER = colors.HexColor("#000000")
+
+
+# ============================================================
+# Utils
+# ============================================================
+
+
+def _normalize_to_str(v) -> str:
+    """
+    Retourne une string propre (TO) ou "".
+    Gère aussi le cas où v est déjà une string issue d'un pandas Series:
+    't_o ...\nName: 29, dtype: object'
+    """
+    if v is None:
+        return ""
+
+    # ✅ cas normal
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return ""
+
+        # ✅ cas pandas Series stringifiée (on extrait la vraie valeur)
+        if ("dtype:" in s) or ("Name:" in s):
+            lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
+            cleaned = []
+            for ln in lines:
+                if ln.startswith("Name:") or "dtype:" in ln:
+                    continue
+                # enlève le préfixe "t_o"
+                if ln.lower().startswith("t_o"):
+                    ln = ln[3:].strip()
+                # ignore bruit / codes inutiles
+                if ln.upper() in {"VONLI"}:
+                    continue
+                if ln.isdigit():
+                    continue
+                if ln:
+                    cleaned.append(ln)
+
+            # priorité : domaine / valeur lisible
+            for cand in cleaned:
+                if "." in cand:   # ex: JumbOnline.com
+                    return cand
+            for cand in cleaned:
+                if "-" in cand:   # ex: JT-JUMBONLINEL
+                    return cand
+            # fallback : dernier élément propre
+            return cleaned[-1] if cleaned else ""
+
+        # string normale
+        return s
+
+    # ❌ pandas Series / numpy / objets → REFUSÉS
+    if hasattr(v, "dtype") or hasattr(v, "values"):
+        return ""
+
+    # dict simple
+    if isinstance(v, dict):
+        for k in ("name", "label", "value"):
+            val = v.get(k)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        return ""
+
+    # objet Django avec champ texte clair
+    for attr in ("name", "nom", "label"):
+        if hasattr(v, attr):
+            val = getattr(v, attr)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+
+    return ""
+
+
+
+def _get_tour_operateur(mission, dossier=None) -> str:
+    # 1) dossier d'abord
+    if dossier is not None:
+        for f in ("client_to_name", "client_to", "tour_operateur", "tour_operator", "client", "client_name"):
+            if hasattr(dossier, f):
+                val = _normalize_to_str(getattr(dossier, f))
+                if val:
+                    return val
+
+    # 2) mission ensuite
+    for f in ("client_to_name", "tour_operateur_name", "tour_operator_name", "client_to", "tour_operateur", "tour_operator"):
+        if hasattr(mission, f):
+            val = _normalize_to_str(getattr(mission, f))
+            if val:
+                return val
+
+    return ""
+
+
+
+
+
+def _safe_filename(name: str) -> str:
+    name = (name or "").strip()
+    name = re.sub(r"\s+", "_", name)
+    name = re.sub(r"[^A-Za-z0-9._-]", "", name)
+    return name or "OM.pdf"
+
+
+def _fmt_time(t) -> str:
+    if not t:
+        return ""
+    try:
+        return t.strftime("%H:%M")
+    except Exception:
+        return str(t)[:5]
+
+
+def _fmt_date(d) -> str:
+    if not d:
+        return ""
+    try:
+        return d.strftime("%d-%m-%Y")
+    except Exception:
+        return str(d)
+
+
+def _fmt_dt_iso(iso: str) -> str:
+    dt = parse_datetime(iso) if iso else None
     if not dt:
-        return "—"
-    dt = localtime(dt)
+        return ""
     return dt.strftime("%d/%m/%Y %H:%M")
 
-def _fmt_d(d):
-    if not d:
-        return "—"
-    return d.strftime("%d-%m-%Y")
 
-def _hline(p: canvas.Canvas, x1, x2, y, w=0.6, col="#C8CCD1"):
-    p.setStrokeColor(colors.HexColor(col))
-    p.setLineWidth(w)
-    p.line(x1, y, x2, y)
+def _p(text: str, style: ParagraphStyle) -> Paragraph:
+    return Paragraph((text or "").replace("\n", "<br/>"), style)
 
-def _text(p: canvas.Canvas, x, y, txt, font="Helvetica", size=10, color="#000", right=False):
-    p.setFont(font, size)
-    p.setFillColor(colors.HexColor(color))
-    if right:
-        p.drawRightString(x, y, txt)
-    else:
-        p.drawString(x, y, txt)
 
-def _kv(p: canvas.Canvas, x, y, label, value, label_w=30*mm, val_w=None, size=10):
-    p.setFont("Helvetica-Bold", size); p.setFillColor(colors.black)
-    p.drawString(x, y, f"{label} :")
-    p.setFont("Helvetica", size)
-    p.drawString(x + label_w, y, _safe_str(value))
-    return y
+def _get_logo_bytes(agence) -> Optional[BytesIO]:
+    try:
+        lf = getattr(agence, "logo_file", None)
+        if not lf or not getattr(lf, "name", None):
+            return None
+        with default_storage.open(lf.name, "rb") as f:
+            return BytesIO(f.read())
+    except Exception:
+        return None
 
-# ------------------------------- Extraction des données -------------------------------
 
-def _ordre_label_sens(ordre) -> str:
+def _mission_kind_label(mission) -> Tuple[str, bool]:
+    mk = (getattr(mission, "main_kind", "") or "").upper()
+    is_depart = mk.startswith("D") or mk.startswith("S")
+    # you asked you can remove "Transfert/Excursion" title; we keep only DEPART/ARRIVEE.
+    kind = "Transfert" if getattr(mission, "type", "") == "T" else "Excursion"
+    return kind, is_depart
+
+
+def _norm(s: str) -> str:
+    return (s or "").strip().lower()
+
+
+# ============================================================
+# Data helpers (avoid Pax duplication with hotel_schedule)
+# ============================================================
+
+def _group_dossiers_by_hotel(fiche) -> Dict[str, List[Any]]:
+    out: Dict[str, List[Any]] = {}
+    for d in fiche.dossiers.all():
+        hname = ""
+        hk = getattr(d, "hotel_fk", None)
+        if hk and getattr(hk, "nom", None):
+            hname = hk.nom
+        else:
+            hname = getattr(d, "hotel", "") or getattr(d, "hotel_name", "") or ""
+        key = _norm(hname) or "__nohotel__"
+        out.setdefault(key, []).append(d)
+    return out
+
+
+def _collect_rows_in_order(mission) -> List[Dict[str, Any]]:
     """
-    Essaie de déterminer si l'OM est DEPART ou ARRIVEE.
-    Heuristiques: mission.type, mission.trajet, premission.type, ordre.trajet…
+    groups = [{heure, hotel, dossiers[]}]
+    If hotel_schedule exists: split dossiers by matching hotel name.
     """
-    # 1) champs explicites
-    for obj in (getattr(ordre, "mission", None), getattr(ordre, "premission", None), ordre):
-        sens = getattr(obj, "type", None)
-        if isinstance(sens, str) and sens.strip().upper() in {"DEPART", "ARRIVEE"}:
-            return sens.strip().upper()
-    # 2) heuristique sur le trajet
-    trajet = getattr(ordre, "trajet", "") or getattr(getattr(ordre, "mission", None), "trajet", "") \
-             or getattr(getattr(ordre, "mission", None), "premission", None) and getattr(ordre.mission.premission, "trajet_prevu", "") or ""
-    t = str(trajet).lower()
-    if "aéroport" in t or "airport" in t or "mir" in t or "tun" in t:
-        # si on voit "vers aéroport" on suppose DEPART, sinon ARRIVEE
-        if "->" in t:
-            parts = [s.strip() for s in t.split("->")]
-            if len(parts) >= 2 and ("aero" in parts[-1].lower() or "air" in parts[-1].lower()):
-                return "DEPART"
-            if len(parts) >= 2 and ("aero" in parts[0].lower() or "air" in parts[0].lower()):
-                return "ARRIVEE"
-    # défaut
-    return "DEPART"
+    rows: List[Dict[str, Any]] = []
 
-def _agence_info(ordre):
-    mission = ordre.mission
-    pre = getattr(mission, "premission", None)
-    ag = getattr(pre, "agence", None)
-    nom = getattr(ag, "nom", "") if ag else ""
-    adr = getattr(ag, "adresse", "") if ag else ""
-    tel = getattr(ag, "telephone", "") if ag else ""
-    email = getattr(ag, "email", "") if ag else ""
-    zone = getattr(ag, "zone", "") if ag else ""  # ex: "HAMMAMET NORD" si tu le stockes là
-    return {"nom": nom, "adresse": adr, "tel": tel, "email": email, "zone": zone}
+    fiches = (
+        mission.fiches
+        .filter(is_deleted=False)
+        .prefetch_related("dossiers", "dossiers__hotel_fk")
+        .order_by("created_at", "id")
+    )
 
-def _airport_code(ordre) -> str:
-    # essaie dossier.aeroport_arrivee/depart, sinon texte court détecté dans trajet
-    mission = ordre.mission
-    pre = getattr(mission, "premission", None)
-    d = getattr(pre, "dossier", None)
-    for k in ("aeroport_depart", "aeroport_arrivee", "aeroport"):
-        v = getattr(d, k, None) if d else None
-        if v:
-            s = str(v).strip()
-            # si l'objet a un code IATA
-            code = getattr(v, "code", None)
-            return (code or s)[:8]
-    # heuristique sur trajet
-    trajet = getattr(ordre, "trajet", "") or getattr(mission, "trajet", "") or getattr(pre, "trajet_prevu", "") or ""
-    for code in ("MIR", "NBE", "TUN", "DJE", "NBE", "MJI"):
-        if code.lower() in trajet.lower():
-            return code
-    return "—"
+    for f in fiches:
+        hs = getattr(f, "hotel_schedule", None) or []
 
-def _veh_line(veh):
-    if not veh:
-        return "—"
-    parts = []
-    if getattr(veh, "type", None): parts.append(veh.type)
-    if getattr(veh, "marque", None): parts.append(veh.marque)
-    if getattr(veh, "model", None): parts.append(veh.model)
-    if getattr(veh, "immatriculation", None): parts.append(veh.immatriculation)
-    return " ".join([p for p in parts if p])
+        if isinstance(hs, list) and hs:
+            dossiers_by_hotel = _group_dossiers_by_hotel(f)
+            used_ids = set()
 
-def _chauffeur_line(chf):
-    if not chf:
-        return "—"
-    nom = f"{getattr(chf, 'nom', '')} {getattr(chf, 'prenom', '')}".strip() or "—"
-    cin = getattr(chf, "cin", None)
-    return nom if not cin else f"{nom}"
+            for item in hs:
+                hotel = (item.get("hotel") or item.get("nom") or "—").strip()
 
-def _collect_rows(ordre) -> List[Dict[str, Any]]:
-    """
-    Retourne une liste de lignes:
-      {"heure":"06:00","hotel":"RESIDENCE ROMANE","pax":1,
-       "vols":[{"nom":"CLIENT NAME","pax":1,"num_vol":"BJ542","heure_vol":"10:05","agence":"JumbOnline.com"}, ...]}
-    Recherche dans:
-      - ordre.lignes (si tu as un modèle OMLine/OrdreLigne)
-      - mission.premission.ramassages (si tu enregistres les pick-ups)
-      - fallback: une unique ligne issue du dossier/hôtel + vol
-    """
-    rows = []
+                dt_iso = (
+                    item.get("datetime_pickup")
+                    or item.get("datetime_depot")
+                    or item.get("datetime_airport")
+                )
+                heure = _fmt_dt_iso(dt_iso) if dt_iso else str(item.get("heure", ""))[:5]
 
-    # 1) Ordre.lignes (structure libre)
-    lignes = getattr(ordre, "lignes", None)
-    if lignes:
-        for li in getattr(lignes, "all", lambda: lignes)():
-            heure = getattr(li, "heure", None)
-            htxt = localtime(heure).strftime("%H:%M") if heure else _safe_str(getattr(li, "heure_txt", ""), "")
-            hotel = _safe_str(getattr(getattr(li, "hotel", None), "nom", None) or getattr(li, "hotel", None))
-            pax = getattr(li, "pax", None) or 0
-            # blocs "vols"
-            vol_list = []
-            items = getattr(li, "vols", None) or []
-            for it in getattr(items, "all", lambda: items)():
-                vol_list.append({
-                    "nom": _safe_str(getattr(it, "nom", None) or getattr(it, "passager", None), ""),
-                    "pax": getattr(it, "pax", None) or 1,
-                    "num_vol": _safe_str(getattr(it, "numero", None) or getattr(it, "num_vol", None), ""),
-                    "heure_vol": _safe_str(getattr(it, "heure_vol", None), ""),
-                    "agence": _safe_str(getattr(it, "agence", None), ""),
-                })
-            rows.append({"heure": htxt, "hotel": hotel, "pax": pax, "vols": vol_list})
+                key = _norm(hotel)
+                dossiers = dossiers_by_hotel.get(key)
 
-    if rows:
-        return rows
+                # fallback: put remaining dossiers on this line (first come)
+                if dossiers is None:
+                    dossiers = [d for d in f.dossiers.all() if getattr(d, "id", None) not in used_ids]
 
-    # 2) premission.ramassages
-    pre = getattr(getattr(ordre, "mission", None), "premission", None)
-    ram = getattr(pre, "ramassages", None)
-    if ram:
-        for ra in getattr(ram, "all", lambda: ram)():
-            htxt = _safe_str(getattr(ra, "heure_txt", None) or (localtime(ra.heure).strftime("%H:%M") if getattr(ra, "heure", None) else ""))
-            hotel = _safe_str(getattr(getattr(ra, "hotel", None), "nom", None) or getattr(ra, "hotel", None))
-            pax = getattr(ra, "pax", None) or 0
-            vols = []
-            for it in getattr(ra, "passagers", []) or []:
-                vols.append({
-                    "nom": _safe_str(getattr(it, "nom", None) or getattr(it, "full_name", None), ""),
-                    "pax": getattr(it, "pax", None) or 1,
-                    "num_vol": _safe_str(getattr(it, "num_vol", None), ""),
-                    "heure_vol": _safe_str(getattr(it, "heure_vol", None), ""),
-                    "agence": _safe_str(getattr(it, "agence", None), ""),
-                })
-            rows.append({"heure": htxt, "hotel": hotel, "pax": pax, "vols": vols})
+                for d in dossiers:
+                    if getattr(d, "id", None) is not None:
+                        used_ids.add(d.id)
 
-    if rows:
-        return rows
+                rows.append({"heure": heure, "hotel": hotel, "dossiers": dossiers})
 
-    # 3) Fallback minimal depuis le dossier
-    d = getattr(pre, "dossier", None) if pre else None
-    hotel = _safe_str(getattr(getattr(d, "hotel", None), "nom", None) or getattr(d, "hotel", None))
-    pax = getattr(d, "nombre_personnes_arrivee", None) or getattr(d, "nombre_personnes_retour", None) or 0
-    num_vol = _safe_str(getattr(d, "num_vol", None) or getattr(d, "numero_vol", None), "")
-    h_vol = _safe_str(getattr(d, "heure_vol", None), "")
-    agence = _safe_str(getattr(d, "agence", None), "")
-    heure_txt = localtime(getattr(ordre.mission, "date_debut", None)).strftime("%H:%M") if getattr(ordre.mission, "date_debut", None) else ""
-    rows.append({
-        "heure": heure_txt,
-        "hotel": hotel,
-        "pax": pax,
-        "vols": [{"nom": "", "pax": pax or 1, "num_vol": num_vol, "heure_vol": h_vol, "agence": agence}],
-    })
+            remaining = [d for d in f.dossiers.all() if getattr(d, "id", None) not in used_ids]
+            if remaining:
+                rows.append({"heure": "", "hotel": "—", "dossiers": remaining})
+
+        else:
+            rows.append({
+                "heure": _fmt_time(getattr(f, "horaires", None)) or "",
+                "hotel": getattr(getattr(f, "hotel", None), "nom", "—") if getattr(f, "hotel_id", None) else "—",
+                "dossiers": list(f.dossiers.all()),
+            })
+
     return rows
 
-def _sum_total_pax(rows: List[Dict[str, Any]]) -> int:
+
+def _sum_total_pax(mission) -> int:
     total = 0
-    for r in rows:
-        if r.get("vols"):
-            total += sum(v.get("pax", 0) or 0 for v in r["vols"])
-        else:
-            total += r.get("pax", 0) or 0
-    return total
+    for f in mission.fiches.filter(is_deleted=False).prefetch_related("dossiers"):
+        for d in f.dossiers.all():
+            total += int(getattr(d, "pax", 0) or 0)
+    return total or int(getattr(mission, "total_pax", 0) or 0)
 
-# ------------------------------- Génération PDF -------------------------------
 
-def build_om_pdf_response(ordre) -> FileResponse:
+# ============================================================
+# Header blocks (like screenshot: title + left/right infos)
+# ============================================================
+
+def _get_zone_label(mission) -> str:
     """
-    A4, layout conforme au modèle de la pièce jointe :
-    - Bandeau SENS (DEPART/ARRIVEE) + bloc info OM
-    - Tableau: Heure | Hôtel | Pax | Vols (NOM / Pax / N° VOL / H.VOL / AGENCE)
-    - Observations + signatures
+    Zone affichée sous OM N° (ex: HAMMAMET NORD).
+    Source UNIQUE: MissionRessource (lieu_arrivee puis lieu_depart).
+    => évite de récupérer des codes type TUN/ALG depuis mission.provenance/destination.
     """
+    try:
+        from b2b.models import MissionRessource  # import local pour éviter cycles
+
+        mr = (
+            MissionRessource.objects
+            .filter(mission_id=mission.id, is_deleted=False)
+            .order_by("-id")
+            .first()
+        )
+        if not mr:
+            return ""
+
+        z = (getattr(mr, "lieu_arrivee", "") or "").strip()
+        if z and z.upper() not in {"TUN", "ALG", "MIR"}:
+            return z.upper()
+
+        z = (getattr(mr, "lieu_depart", "") or "").strip()
+        if z and z.upper() not in {"TUN", "ALG", "MIR"}:
+            return z.upper()
+
+        return ""
+    except Exception:
+        return ""
+
+
+
+
+def _get_aeroport_label(mission) -> str:
+    for f in ("aeroport", "airport", "aeroport_code"):
+        v = getattr(mission, f, None)
+        if v:
+            s = str(v).strip()
+            if s:
+                return s.upper()
+    return ""
+
+
+def _get_date_label(mission) -> str:
+    # prefer mission.date
+    d = getattr(mission, "date", None)
+    if d:
+        return _fmt_date(d)
+    # else from created_at
+    ca = getattr(mission, "created_at", None)
+    if ca:
+        try:
+            return ca.strftime("%d-%m-%Y")
+        except Exception:
+            return ""
+    return ""
+
+
+def _build_top_agence_header(agence, s_right: ParagraphStyle):
+    """
+    Logo top-left, agency coordinates top-right (as you asked).
+    """
+    logo_io = _get_logo_bytes(agence)
+    logo_flowable = ""
+    if logo_io:
+        try:
+            logo_flowable = Image(logo_io, width=48 * mm, height=26 * mm, kind="proportional")
+
+        except Exception:
+            logo_flowable = ""
+
+    nom_agence = (getattr(agence, "nom", None) or getattr(agence, "name", None) or "").strip()
+    adresse = (getattr(agence, "adresse", None) or getattr(agence, "address", None) or "").strip()
+    ville = (getattr(agence, "ville", None) or getattr(agence, "city", None) or "").strip()
+    tel = (getattr(agence, "telephone", None) or getattr(agence, "tel", None) or getattr(agence, "phone", None) or "").strip()
+    email = (getattr(agence, "email", None) or getattr(agence, "mail", None) or "").strip()
+
+    lines = []
+    if nom_agence:
+        lines.append(f"<b>{nom_agence}</b>")
+    if adresse:
+        lines.append(adresse)
+    if ville:
+        lines.append(ville)
+    if tel:
+        lines.append(f"Tél : {tel}")
+    if email:
+        lines.append(f"Email : {email}")
+
+    right_para = _p("<br/>".join(lines), s_right)
+
+    t = Table([[logo_flowable, right_para]], colWidths=[55 * mm, 131 * mm])
+
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (0, 0), (0, 0), "LEFT"),
+        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    return t
+
+
+def _build_depart_header_block(mission, ordre, styles):
+    """
+    Layout like screenshot:
+    Row1: OM N° (left) | DEPART/ARRIVEE (center) | Date (right)
+    Row2: ZONE (left)  | (blank)                 | Aéroport (right)
+    Row3: BUS (left)   | PAX total (center)      | CHAUFFEUR (right)
+    """
+    S = styles["S"]
+    S_R = styles["S_R"]
+    S_C = styles["S_C"]
+    H = styles["H"]
+
+    kind_label, is_depart = _mission_kind_label(mission)
+    subtitle = "DEPART" if is_depart else "ARRIVEE"
+
+    om_ref = getattr(ordre, "reference", "") or getattr(ordre, "ref", "") or "—"
+    zone = _get_zone_label(mission)
+    bus = str(getattr(mission, "vehicule", "") or "—")
+    date_lbl = _get_date_label(mission)
+    aeroport = _get_aeroport_label(mission)
+    chauffeur = str(getattr(mission, "chauffeur", "") or "—")
+    pax_total = _sum_total_pax(mission)
+
+    row1 = [
+        _p(f"<b>OM N° :</b> <b>{om_ref}</b>", S),
+        _p(f"<b>{subtitle}</b>", H),
+        _p(f"<b>Date :</b> <b>{date_lbl}</b>", S_R),
+    ]
+    row2 = [
+        _p(f"<b>{zone}</b>" if zone else "", S),
+        _p("", S_C),
+        _p(f"<b>Aéroport :</b> <b>{aeroport}</b>" if aeroport else "<b>Aéroport :</b>", S_R),
+    ]
+    row3 = [
+        _p(f"<b>BUS :</b> <b>{bus}</b>", S),
+        _p(f"<b>PAX :</b> <b>{pax_total}</b>", S_C),
+        _p(f"<b>CHAUFFEUR :</b> <b>{chauffeur}</b>", S_R),
+    ]
+
+    t = Table([row1, row2, row3], colWidths=[62 * mm, 62 * mm, 62 * mm])
+    t.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (0, -1), "LEFT"),
+        ("ALIGN", (1, 0), (1, -1), "CENTER"),
+        ("ALIGN", (2, 0), (2, -1), "RIGHT"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    return t
+
+
+# ============================================================
+# Table (with merged "Vols" header like screenshot)
+# ============================================================
+
+def _build_main_table(mission, s_cell: ParagraphStyle, s_cell_center: ParagraphStyle):
+    groups = _collect_rows_in_order(mission)
+
+    # 2 header rows with a merged "Vols" spanning 5 columns
+    header_row_0 = [
+        _p("<b>DATE ET HEURE</b>", s_cell_center),
+        _p("<b>HÖTEL</b>", s_cell),
+        _p("<b>PAX</b>", s_cell_center),
+        _p("<b>VOLS</b>", s_cell_center),  # span (3..7)
+        "", "", "", ""
+    ]
+    header_row_1 = [
+        "", "", "",
+        _p("<b>NOM</b>", s_cell),
+        _p("<b>PAW</b>", s_cell_center),
+        _p("<b>N° VOL</b>", s_cell_center),
+        _p("<b>H.VOL</b>", s_cell_center),
+        _p("<b>AGENCE</b>", s_cell),
+    ]
+
+    data: List[List[Any]] = [header_row_0, header_row_1]
+    spans: List[Tuple[Tuple[int, int], Tuple[int, int]]] = []
+    # span for "Vols"
+    spans.append(((3, 0), (7, 0)))
+
+    # keep track of row index in table
+    r = 2
+
+    for g in groups:
+        dossiers = g["dossiers"] or []
+        if not dossiers:
+            # one empty line for group
+            data.append([
+                _p(g["heure"], s_cell_center),
+                _p(g["hotel"], s_cell),
+                _p("", s_cell_center),
+                _p("", s_cell),
+                _p("", s_cell_center),
+                _p("", s_cell_center),
+                _p("", s_cell_center),
+                _p("", s_cell),
+            ])
+            r += 1
+            continue
+
+        pax_group = sum(int(getattr(d, "pax", 0) or 0) for d in dossiers)
+
+        start_r = r
+        for i, d in enumerate(dossiers):
+            titulaire = (getattr(d, "titulaire", "") or "CLIENT").strip()
+
+            pax_d = int(getattr(d, "pax", 0) or 0)
+            numero_vol = (getattr(d, "numero_vol", "") or "").strip()
+            h_vol = _fmt_time(getattr(d, "horaires", None)) or ""
+
+            # ✅ AGENCE = client_TO (tour operator), as you asked
+            client_to = _get_tour_operateur(mission, d)
+
+            data.append([
+                _p(g["heure"] if i == 0 else "", s_cell_center),
+                _p(g["hotel"] if i == 0 else "", s_cell),
+                _p(str(pax_group) if i == 0 else "", s_cell_center),
+                _p(titulaire, s_cell),
+                _p(str(pax_d), s_cell_center),
+                _p(numero_vol, s_cell_center),
+                _p(h_vol, s_cell_center),
+                _p(client_to, s_cell),
+            ])
+            r += 1
+
+        # Merge the 3 first columns (Heure/Hôtel/Pax group) across dossier rows like screenshot
+        end_r = r - 1
+        if end_r > start_r:
+            spans.append(((0, start_r), (0, end_r)))
+            spans.append(((1, start_r), (1, end_r)))
+            spans.append(((2, start_r), (2, end_r)))
+
+    # A4 usable width = 210 - 24 margins = 186mm
+    colWidths = [22*mm, 56*mm, 10*mm, 45*mm, 10*mm, 16*mm, 14*mm, 25*mm]
+
+
+    table = LongTable(data, colWidths=colWidths, repeatRows=2)
+
+    ts = TableStyle([
+        # header style
+        ("BACKGROUND", (0, 0), (-1, 1), HEADER_BLUE),
+        ("ALIGN", (0, 0), (-1, 1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+
+        # grid (thicker like screenshot)
+        ("BOX", (0, 0), (-1, -1), 1.2, BORDER),
+        ("INNERGRID", (0, 0), (-1, -1), 1.0, BORDER),
+
+        # body alignment
+        ("ALIGN", (0, 2), (0, -1), "CENTER"),  # Heure
+        ("ALIGN", (2, 2), (2, -1), "CENTER"),  # Pax group
+        ("ALIGN", (4, 2), (6, -1), "CENTER"),  # Vols columns (pax, no, h.vol)
+
+        # padding (tight/pro)
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ])
+
+    # apply spans
+    for (a, b) in spans:
+        ts.add("SPAN", a, b)
+
+    table.setStyle(ts)
+    return table
+
+
+# ============================================================
+# Observations box (like screenshot)
+# ============================================================
+
+def _build_observations_box(text: str, s: ParagraphStyle):
+    box_title = _p("<b>OBSERVATIONS :</b>", s)
+    box_body = _p(text or "", s)
+
+    t = Table([[box_title], [box_body]], colWidths=[186 * mm], rowHeights=[8*mm, 25*mm])
+    t.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 1.2, BORDER),
+        ("INNERGRID", (0, 0), (-1, -1), 0.0, BORDER),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    return t
+
+
+# ============================================================
+# PDF FINAL
+# ============================================================
+
+def build_om_pdf_response(mission, request=None, *, ordre=None):
     buff = BytesIO()
-    p = canvas.Canvas(buff, pagesize=A4)
-    W, H = A4
-    margin = 14 * mm
-    xL, xR = margin, W - margin
-    y = H - margin
 
-    mission = ordre.mission
-    pre = getattr(mission, "premission", None)
-    veh = getattr(ordre, "vehicule", None)
-    chf = getattr(ordre, "chauffeur", None)
+    doc = SimpleDocTemplate(
+        buff,
+        pagesize=A4,
+        leftMargin=12*mm,
+        rightMargin=12*mm,
+        topMargin=10*mm,
+        bottomMargin=10*mm,
+        title="Ordre de mission",
+    )
 
-    agence = _agence_info(ordre)
-    sens = _ordre_label_sens(ordre)
-    aeroport = _airport_code(ordre)
-    rows = _collect_rows(ordre)
-    total_pax = _sum_total_pax(rows)
+    base = getSampleStyleSheet()
 
-    # -------------------- En-tête agence (gauche) --------------------
-    _text(p, xL, y, _safe_str(agence["nom"], ""), "Helvetica-Bold", 12)
-    y -= 5.2 * mm
-    _text(p, xL, y, f"{_safe_str(agence['adresse'],'')}")
-    y -= 5.2 * mm
-    line = f"{_safe_str(agence['tel'],'')}  Tél :" if agence["tel"] else "Tél :"
-    _text(p, xL, y, line)
-    y -= 5.2 * mm
-    _text(p, xL, y, f"Email : {_safe_str(agence['email'],'')}")
-    # bandeau sens (droite)
-    p.setFillColor(colors.HexColor("#000"))
-    p.setFont("Helvetica-Bold", 18)
-    _text(p, xR, H - margin, sens, right=True)
+    # Styles tuned for this layout
+    S = ParagraphStyle("S", parent=base["Normal"], fontSize=9, leading=11, alignment=TA_LEFT)
+    S_R = ParagraphStyle("S_R", parent=S, alignment=TA_RIGHT)
+    S_C = ParagraphStyle("S_C", parent=S, alignment=TA_CENTER)
 
-    y -= 7 * mm
-    _hline(p, xL, xR, y)
-    y -= 6 * mm
+    H = ParagraphStyle("H", parent=base["Heading2"], fontSize=14, leading=16, alignment=TA_CENTER)
 
-    # -------------------- Ligne infos OM (comme le modèle) --------------------
-    # OM N° : XXXXX  Date : DD-MM-YYYY
-    om_date = _fmt_d(getattr(mission, "date_debut", None) or getattr(mission, "created_at", None))
-    _text(p, xL, y, f"OM N° : {_safe_str(getattr(ordre, 'reference', ''))}", "Helvetica-Bold", 11)
-    _text(p, xL + 70*mm, y, f"Date : {om_date}", "Helvetica-Bold", 11)
+    cell = ParagraphStyle("cell", parent=S, fontSize=8, leading=10)
+    cell_c = ParagraphStyle("cell_c", parent=cell, alignment=TA_CENTER)
 
-    y -= 6.5 * mm
+    styles = {"S": S, "S_R": S_R, "S_C": S_C, "H": H}
 
-    # HAMMAMET NORD  Aéroport : MIR
-    zone_txt = _safe_str(agence["zone"], "")
-    _text(p, xL, y, _safe_str(zone_txt, "").upper(), "Helvetica-Bold", 11)
-    _text(p, xL + 70*mm, y, f"Aéroport : {aeroport}", "Helvetica-Bold", 11)
+    agence = getattr(mission, "agence", None)
+    om_ref = getattr(ordre, "reference", "") or getattr(ordre, "ref", "") or "—"
 
-    y -= 6.5 * mm
+    elems = []
 
-    # BUS : 185TU8512   TOTAL : 48   CHAUFFEUR : BEN ALI MAAMAR
-    bus_line = _veh_line(veh)
-    _text(p, xL, y, f"BUS : {bus_line}", "Helvetica-Bold", 11)
-    _text(p, xL + 70*mm, y, f"TOTAL : {total_pax}", "Helvetica-Bold", 11)
-    _text(p, xL + 100*mm, y, f"CHAUFFEUR : {_chauffeur_line(chf)}", "Helvetica-Bold", 11)
+    # 1) agency header: logo left / coords right
+    if agence:
+        elems.append(_build_top_agence_header(agence, S_R))
+        elems.append(Spacer(1, 3*mm))
 
-    y -= 8.5 * mm
-    _hline(p, xL, xR, y)
-    y -= 4.5 * mm
+    # 2) main header block: OM + DEPART/ARRIVEE + Date/Aéroport/Chauffeur/Pax
+    elems.append(_build_depart_header_block(mission, ordre, styles))
+    elems.append(Spacer(1, 6*mm))
 
-    # -------------------- Tableau --------------------
-    # Colonnes: Heure | Hôtel | Pax | Vols (Nom, Pax, N° VOL, H.VOL, AGENCE)
-    # Largeurs (approx) pour coller au rendu de la PJ
-    col_heure = 18 * mm
-    col_hotel = 54 * mm
-    col_pax   = 12 * mm
-    col_vols_w = (xR - xL) - (col_heure + col_hotel + col_pax)
-    # Vols sous-colonnes
-    sub_nom   = 42 * mm
-    sub_pax   = 10 * mm
-    sub_num   = 24 * mm
-    sub_hvol  = 22 * mm
-    sub_ag    = col_vols_w - (sub_nom + sub_pax + sub_num + sub_hvol)
+    # 3) table (like screenshot)
+    elems.append(_build_main_table(mission, cell, cell_c))
+    elems.append(Spacer(1, 10*mm))
 
-    # En-têtes
-    _text(p, xL + 2, y, "Heure", "Helvetica-Bold", 10)
-    _text(p, xL + col_heure + 2, y, "Hôtel", "Helvetica-Bold", 10)
-    _text(p, xL + col_heure + col_hotel + 2, y, "Pax", "Helvetica-Bold", 10)
-    _text(p, xL + col_heure + col_hotel + col_pax + 2, y, "Vols", "Helvetica-Bold", 10)
-    y -= 5.5 * mm
-    _hline(p, xL, xR, y)
+    # 4) observations box
+    elems.append(_build_observations_box(getattr(mission, "observation", "") or "", S))
 
-    y -= 2.5 * mm
-
-    # Ligne des sous-entêtes "Vols"
-    vx = xL + col_heure + col_hotel + col_pax
-    _text(p, vx + 2, y, "NOM", "Helvetica", 9)
-    _text(p, vx + sub_nom + 2, y, "Pax", "Helvetica", 9)
-    _text(p, vx + sub_nom + sub_pax + 2, y, "N° VOL", "Helvetica", 9)
-    _text(p, vx + sub_nom + sub_pax + sub_num + 2, y, "H.VOL", "Helvetica", 9)
-    _text(p, vx + sub_nom + sub_pax + sub_num + sub_hvol + 2, y, "AGENCE", "Helvetica", 9)
-
-    y -= 4.8 * mm
-    _hline(p, xL, xR, y)
-    y -= 1.8 * mm
-
-    # Lignes
-    line_h = 5.2 * mm
-    for r in rows:
-        # Heure / Hôtel / Pax (peuvent s'afficher sur plusieurs sous-lignes si plusieurs vols)
-        heure_txt = _safe_str(r.get("heure", ""), "")
-        hotel_txt = _safe_str(r.get("hotel", ""), "")
-        pax_txt = str(r.get("pax", "")) if r.get("pax") not in (None, "") else ""
-
-        vols = r.get("vols") or [{}]
-        first = True
-        for v in vols:
-            # Si on dépasse la page, on saute
-            if y < 40 * mm:
-                # Pied + saut de page
-                p.setFont("Helvetica", 8)
-                p.setFillColor(colors.HexColor("#888"))
-                _text(p, xR, 12 * mm, f"OM {getattr(ordre, 'reference', '')} — généré par b2bMouha", "Helvetica", 8, "#888", right=True)
-                p.showPage()
-                p.setFont("Helvetica", 10)
-                y = H - margin
-            # Colonnes fixes (une seule fois par ramassage)
-            if first:
-                _text(p, xL + 2, y, heure_txt)
-                _text(p, xL + col_heure + 2, y, hotel_txt)
-                _text(p, xL + col_heure + col_hotel + 2, y, pax_txt)
-                first = False
-            # Bloc vols
-            _text(p, vx + 2, y, _safe_str(v.get("nom", ""), ""))
-            _text(p, vx + sub_nom + 2, y, str(v.get("pax", "")) if v.get("pax") not in (None, "") else "")
-            _text(p, vx + sub_nom + sub_pax + 2, y, _safe_str(v.get("num_vol", ""), ""))
-            _text(p, vx + sub_nom + sub_pax + sub_num + 2, y, _safe_str(v.get("heure_vol", ""), ""))
-            _text(p, vx + sub_nom + sub_pax + sub_num + sub_hvol + 2, y, _safe_str(v.get("agence", ""), ""))
-            y -= line_h
-
-        _hline(p, xL, xR, y)
-        y -= 1.2 * mm
-
-    # -------------------- Observations --------------------
-    y -= 4 * mm
-    _text(p, xL, y, "OBSERVATIONS :", "Helvetica-Bold", 10)
-    y -= 5.2 * mm
-
-    obs = _safe_str(getattr(mission, "details", "") or getattr(ordre, "observations", "") or "", "")
-    if not obs:
-        _text(p, xL, y, "—")
-        y -= 6 * mm
-    else:
-        p.setFont("Helvetica", 10)
-        max_chars = 110
-        while obs:
-            line = obs[:max_chars]
-            _text(p, xL, y, line)
-            obs = obs[max_chars:]
-            y -= 5.0 * mm
-
-    y -= 8 * mm
-
-    # -------------------- Signatures --------------------
-    _text(p, xL, y, _safe_str(_chauffeur_line(chf), "Signature Chauffeur"))
-    _text(p, xR, y, _safe_str(agence["nom"], "Signature Responsable"), right=True)
-
-    y -= 18 * mm
-    _hline(p, xL, xL + 60 * mm, y)
-    _hline(p, xR - 60 * mm, xR, y)
-
-    # -------------------- Pied de page --------------------
-    p.setFont("Helvetica", 8)
-    p.setFillColor(colors.HexColor("#888"))
-    _text(p, xR, 12 * mm, f"OM {getattr(ordre, 'reference', '')} — généré par b2bMouha", "Helvetica", 8, "#888", right=True)
-
-    p.showPage()
-    p.save()
+    doc.build(elems)
     buff.seek(0)
-    return FileResponse(buff, as_attachment=True, filename=f"ordre_mission_{ordre.reference}.pdf")
+
+    filename = _safe_filename(f"OM_{om_ref}.pdf")
+    return FileResponse(
+        buff,
+        as_attachment=True,
+        filename=filename,
+        content_type="application/pdf",
+    )

@@ -1,224 +1,282 @@
 // src/components/FicheMouvementList/FichesMouvementList.jsx
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useLocation, useParams } from "react-router-dom";
 import api from "../../api";
-import AssignResourcesModal from "./AssignResourcesModal";
-import { fmtHour } from "./utils";
 import "./fichesList.css";
 
-/* Badges */
+/* ================= Helpers ================= */
+const DEPART_TYPES = new Set(["D", "S"]);
+const ARRIVEE_TYPES = new Set(["A", "L"]);
+
 const BadgeType = ({ t }) => {
-  const label = t === "A" ? "Arrivée" : t === "D" ? "Départ" : "—";
-  const cls = t === "A" ? "bg-success" : t === "D" ? "bg-primary" : "bg-secondary";
+  const tt = (t || "").trim().toUpperCase();
+  const isArr = tt === "A" || tt === "L";
+  const isDep = tt === "D" || tt === "S";
+  const label = isArr ? "Arrivée" : isDep ? "Départ" : tt || "—";
+  const cls = isArr ? "bg-success" : isDep ? "bg-primary" : "bg-secondary";
   return <span className={`badge ${cls}`}>{label}</span>;
 };
 
-const ObservationCell = ({ text = "", max = 60, onOpen }) => {
-  if (!text) return <>—</>;
-  const isLong = text.length > max;
-  const preview = isLong ? text.slice(0, max).trimEnd() + "…" : text;
-  return (
-    <div className="d-flex align-items-center gap-2">
-      <div className="text-truncate" style={{ maxWidth: 260 }}>{preview}</div>
-      {isLong && (
-        <button className="btn btn-sm btn-outline-warning" onClick={() => onOpen(text)} title="Lire la suite">
-          Lire la suite
-        </button>
-      )}
-    </div>
-  );
-};
+const toggleSet = (setFn, v) =>
+  setFn((prev) => {
+    const n = new Set(prev);
+    n.has(v) ? n.delete(v) : n.add(v);
+    return n;
+  });
 
-const PortalModal = ({ title, children, onClose }) => (
-  <div className="modal d-block" tabIndex="-1" style={{ background: "rgba(0,0,0,.35)" }}>
-    <div className="modal-dialog modal-lg">
-      <div className="modal-content">
-        <div className="modal-header">
-          <h5 className="modal-title m-0">{title}</h5>
-          <button type="button" className="btn-close" onClick={onClose} />
-        </div>
-        <div className="modal-body">{children}</div>
-      </div>
-    </div>
-  </div>
-);
-
-const asArray = (data) =>
-  Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : [];
-
-/** Détecte le mode selon l'URL courante */
-function useFicheMode() {
-  const location = useLocation();
-  const path = location.pathname.toLowerCase();
-  if (path.includes("mes-departs")) return "D";
-  if (path.includes("mes-arrivees")) return "A";
+function usePageKind() {
+  const { pathname } = useLocation();
+  const p = (pathname || "").toLowerCase();
+  if (p.includes("mes-departs")) return "depart";
+  if (p.includes("mes-arrivees")) return "arrivee";
   return null;
 }
 
-/** Helpers pour extraire les infos malgré des structures variables */
-function summarizeHotels(it) {
-  // 1) tableau d’hôtels [{hotel, pax, ...}]
-  if (Array.isArray(it.hotels) && it.hotels.length) {
-    const first = it.hotels[0]?.hotel || "—";
-    return it.hotels.length > 1 ? `${first} (+${it.hotels.length - 1})` : first;
-  }
-  // 2) champ simple éventuel renvoyé par l’API
-  if (typeof it.hotel === "string" && it.hotel.trim()) return it.hotel.trim();
-  return "—";
+function sumPax(list) {
+  return list.reduce((acc, it) => acc + (Number(it.pax) || 0), 0);
 }
 
-function extractPax(it) {
-  // 1) champs totaux s’ils existent
-  if (typeof it.pax === "number") return it.pax;
-  if (typeof it.total_pax === "number") return it.total_pax;
-
-  // 2) somme depuis hotels[].pax
-  if (Array.isArray(it.hotels)) {
-    const s = it.hotels.reduce((acc, h) => acc + (Number(h?.pax) || 0), 0);
-    if (s > 0) return s;
-  }
-
-  // 3) somme depuis dossiers (si présents) – on prend pax, sinon champs “nombre_personnes_*”
-  if (Array.isArray(it.dossiers)) {
-    const s = it.dossiers.reduce((acc, d) => {
-      const v =
-        Number(d?.pax) ||
-        Number(d?.nombre_personnes_arrivee) ||
-        Number(d?.nombre_personnes_retour) ||
-        0;
-      return acc + v;
-    }, 0);
-    if (s > 0) return s;
-  }
-
-  return "—";
+function isoToday() {
+  const now = new Date();
+  const yyyy = String(now.getFullYear());
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
-function extractClients(it, limit = 3) {
-  // 1) string direct
-  if (typeof it.clients === "string" && it.clients.trim()) return it.clients.trim();
-
-  // 2) array direct
-  if (Array.isArray(it.clients) && it.clients.length) {
-    const arr = it.clients.map(String).map((s) => s.trim()).filter(Boolean);
-    if (!arr.length) return "—";
-    if (arr.length <= limit) return arr.join(", ");
-    return `${arr.slice(0, limit).join(", ")} (+${arr.length - limit})`;
-  }
-
-  // 3) dériver depuis dossiers (si disponibles)
-  if (Array.isArray(it.dossiers)) {
-    const names = [];
-    const push = (s) => {
-      const v = String(s || "").trim();
-      if (v) names.push(v);
-    };
-    it.dossiers.forEach((d) => {
-      // Essaie plusieurs clés
-      const last =
-        d.nom_voyageur ||
-        d.nom_client ||
-        d.nom_passager ||
-        d.nom ||
-        d.last_name ||
-        d.client_name ||
-        d.passenger_last ||
-        (d.client && (d.client.nom || d.client.name)) ||
-        (d.passager && (d.passager.nom || d.passager.name)) ||
-        "";
-      const first =
-        d.prenom_voyageur ||
-        d.prenom_client ||
-        d.prenom_passager ||
-        d.prenom ||
-        d.first_name ||
-        d.passenger_first ||
-        (d.client && (d.client.prenom || d.client.first)) ||
-        (d.passager && (d.passager.prenom || d.passager.first)) ||
-        "";
-      const single =
-        d.name ||
-        d.client ||
-        d["Nom Voyageur"] ||
-        d["Voyageur"] ||
-        d["Client"] ||
-        d.passager ||
-        d.passenger_name ||
-        "";
-
-      const full = [String(last).trim(), String(first).trim()].filter(Boolean).join(" ");
-      push(full || single);
-    });
-    // Uniques + limite
-    const uniq = Array.from(new Set(names.filter(Boolean)));
-    if (!uniq.length) return "—";
-    if (uniq.length <= limit) return uniq.join(", ");
-    return `${uniq.slice(0, limit).join(", ")} (+${uniq.length - limit})`;
-  }
-
-  return "—";
-}
-
-function extractObservation(it) {
-  // 1) champ direct
-  if (typeof it.observation === "string" && it.observation.trim()) return it.observation.trim();
-
-  // 2) concat depuis hotels[].observation
-  if (Array.isArray(it.hotels)) {
-    const list = it.hotels
-      .map((h) => String(h?.observation || "").trim())
-      .filter(Boolean);
-    if (list.length) return list.join(" • ");
-  }
-
-  // 3) concat depuis dossiers[].observation
-  if (Array.isArray(it.dossiers)) {
-    const list = it.dossiers
-      .map((d) => String(d?.observation || "").trim())
-      .filter(Boolean);
-    if (list.length) return list.join(" • ");
-  }
-
+// normalise "1400" -> "14:00", "14:00" -> "14:00"
+function normalizeHv(v) {
+  const hv = (v || "").toString().trim();
+  if (/^\d{4}$/.test(hv)) return hv.slice(0, 2) + ":" + hv.slice(2);
+  if (/^\d{2}:\d{2}$/.test(hv)) return hv;
+  if (/^\d{2}:\d{2}:\d{2}$/.test(hv)) return hv.slice(0, 5);
   return "";
 }
 
+/* ===== UI helpers (group lists: avoid truncation, keep pax readable) ===== */
+function GroupItem({ id, checked, onToggle, title, pax, fallbackTitle = "—" }) {
+  const safeTitle = (title || "").toString().trim() || fallbackTitle;
+  return (
+    <div className="form-check fm-group-item">
+      <input
+        id={id}
+        type="checkbox"
+        className="form-check-input fm-group-check"
+        checked={checked}
+        onChange={onToggle}
+      />
+      <label htmlFor={id} className="fm-group-label" title={safeTitle}>
+        <span className="fm-group-text">{safeTitle}</span>
+        <span className="badge bg-light text-dark fm-group-pax">
+          PAX : {Number(pax) || 0}
+        </span>
+      </label>
+    </div>
+  );
+}
+
+/* ================= Rail droit (cascading) ================= */
+function RightRail({
+  dateOptions,
+  aeroOptions,
+  volOptions,
+  selDates,
+  setSelDates,
+  selAero,
+  setSelAero,
+  selVols,
+  setSelVols,
+  onResetAll,
+  loading,
+  pageKind,
+}) {
+  const showAero = selDates.size > 0;
+  const showVols = showAero && selAero.size > 0;
+
+  const clearDates = () => setSelDates(new Set());
+  const clearAero = () => setSelAero(new Set());
+  const clearVols = () => setSelVols(new Set());
+
+  const aeroLabel =
+    pageKind === "depart"
+      ? "Aéroports (provenance)"
+      : "Aéroports (destination)";
+
+  return (
+    <aside className="fm-right-rail">
+      <div className="d-flex justify-content-end gap-2 mb-3">
+        <button
+          className="btn btn-outline-secondary"
+          onClick={onResetAll}
+          disabled={loading}
+        >
+          Réinitialiser
+        </button>
+        {/* Ici tu avais un bouton Suivant désactivé : on le laisse comme ça */}
+        <button className="btn btn-primary" disabled>
+          {loading ? "…" : "Suivant"}
+        </button>
+      </div>
+
+      {/* Dates */}
+      <div className="mb-3">
+        <div className="d-flex justify-content-between align-items-center mb-1">
+          <label className="form-label m-0">Date</label>
+          <button className="btn btn-link btn-sm p-0" onClick={clearDates}>
+            Clear
+          </button>
+        </div>
+        <div className="border rounded p-2" style={{ maxHeight: 180, overflow: "auto" }}>
+          {dateOptions.length ? (
+            dateOptions.map((d) => (
+              <label key={d.date || "-"} className="d-flex justify-content-between mb-1">
+                <span>
+                  <input
+                    type="checkbox"
+                    className="form-check-input me-2"
+                    checked={selDates.has(d.date)}
+                    onChange={() => toggleSet(setSelDates, d.date)}
+                  />
+                  {d.date || "—"}
+                </span>
+                <span className="badge bg-light text-dark">{d.count} fiches</span>
+              </label>
+            ))
+          ) : (
+            <div className="text-muted small">—</div>
+          )}
+        </div>
+      </div>
+
+      {/* Aéroports */}
+      {showAero && (
+        <div className="mb-3">
+          <div className="d-flex justify-content-between align-items-center mb-1">
+            <label className="form-label m-0">{aeroLabel}</label>
+            <button className="btn btn-link btn-sm p-0" onClick={clearAero}>
+              Clear
+            </button>
+          </div>
+          <div className="border rounded p-2" style={{ maxHeight: 180, overflow: "auto" }}>
+            {aeroOptions.length ? (
+              aeroOptions.map((a) => (
+                <label key={a.aeroport || "-"} className="d-flex justify-content-between mb-1">
+                  <span>
+                    <input
+                      type="checkbox"
+                      className="form-check-input me-2"
+                      checked={selAero.has(a.aeroport)}
+                      onChange={() => toggleSet(setSelAero, a.aeroport)}
+                    />
+                    {a.aeroport}
+                  </span>
+                  <span className="badge bg-light text-dark">{a.count} fiches</span>
+                </label>
+              ))
+            ) : (
+              <div className="text-muted small">—</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Vols */}
+      {showVols && (
+        <div className="mb-3">
+          <div className="d-flex justify-content-between align-items-center mb-1">
+            <label className="form-label m-0">Vols</label>
+            <button className="btn btn-link btn-sm p-0" onClick={clearVols}>
+              Clear
+            </button>
+          </div>
+          <div className="border rounded p-2" style={{ maxHeight: 180, overflow: "auto" }}>
+            {volOptions.length ? (
+              volOptions.map((v) => (
+                <label key={v.numero_vol || "-"} className="d-flex justify-content-between mb-1">
+                  <span>
+                    <input
+                      type="checkbox"
+                      className="form-check-input me-2"
+                      checked={selVols.has(v.numero_vol)}
+                      onChange={() => toggleSet(setSelVols, v.numero_vol)}
+                    />
+                    {v.label}
+                  </span>
+                  <span className="badge bg-light text-dark">{v.pax} PAX</span>
+                </label>
+              ))
+            ) : (
+              <div className="text-muted small">—</div>
+            )}
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+/* ================= Page principale ================= */
 export default function FichesMouvementList() {
   const navigate = useNavigate();
-  const { agenceId } = useParams();
-  const mode = useFicheMode(); // "D" | "A" | null
+  const { agence_id } = useParams();
+  const pageKind = usePageKind(); // 'depart' | 'arrivee' | null
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [selectedMission, setSelectedMission] = useState(null);
-  const [obsFullText, setObsFullText] = useState(null);
 
-  // Affichage de fin = début + 180min (affichage uniquement)
-  const END_OFFSET_MIN = 180;
+  // Groupes haut (multi-choix)
+  const [selTOs, setSelTOs] = useState(new Set());
+  const [selZones, setSelZones] = useState(new Set()); // stores zone_id as string
+  const [selHotels, setSelHotels] = useState(new Set());
+  const [selObs, setSelObs] = useState(new Set());
 
-  const title = useMemo(() => {
-    if (mode === "D") return "🛫 Mes départs";
-    if (mode === "A") return "🛬 Mes arrivées";
-    return "📋 Fiches de mouvement";
-  }, [mode]);
+  // Filtres cascade
+  const [selDates, setSelDates] = useState(new Set());
+  const [selAero, setSelAero] = useState(new Set());
+  const [selVols, setSelVols] = useState(new Set());
 
-  const emptyMsg = useMemo(() => {
-    if (mode === "D") return "Aucun départ trouvé.";
-    if (mode === "A") return "Aucune arrivée trouvée.";
-    return "Aucune fiche trouvée.";
-  }, [mode]);
+  const hasAllRightFilters = useMemo(
+    () => selDates.size > 0 && selAero.size > 0 && selVols.size > 0,
+    [selDates, selAero, selVols]
+  );
+
+  // Table sélection
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const toggleRow = (id) =>
+    setSelectedIds((prev) => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+
+  // ------ Select All (sur la vue filtrée) ------
+  const headerCheckRef = useRef(null);
+
+  const selectAllInFiltered = (checked, currentFiltered) => {
+    setSelectedIds((prev) => {
+      if (checked) {
+        const n = new Set(prev);
+        for (const it of currentFiltered) n.add(it.id);
+        return n;
+      } else {
+        const n = new Set(prev);
+        for (const it of currentFiltered) n.delete(it.id);
+        return n;
+      }
+    });
+  };
 
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
-      const url =
-        mode === "D" || mode === "A"
-          ? `fiches-mouvement-list/?type=${mode}`
-          : `fiches-mouvement-list/`;
-
-      const { data } = await api.get(url);
-      let arr = asArray(data);
-      if (mode === "D") arr = arr.filter((it) => it?.type === "D");
-      if (mode === "A") arr = arr.filter((it) => it?.type === "A");
+      const { data } = await api.get("dossiers/to-fiche/", {
+        params: { agence: agence_id, kind: pageKind },
+      });
+      const arr = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.results)
+        ? data.results
+        : [];
       setItems(arr);
     } catch (e) {
       console.error(e);
@@ -226,171 +284,512 @@ export default function FichesMouvementList() {
     } finally {
       setLoading(false);
     }
-  }, [mode]);
+  }, [agence_id, pageKind]);
 
-  useEffect(() => { fetchList(); }, [fetchList]);
+  useEffect(() => {
+    fetchList();
+  }, [fetchList]);
 
-  const isNextDay = (start, end) => {
-    if (!start || !end) return false;
-    const s = new Date(start);
-    const e = new Date(end);
-    return (
-      e.getFullYear() !== s.getFullYear() ||
-      e.getMonth() !== s.getMonth() ||
-      e.getDate() !== s.getDate()
+  const activeTypeSet = useMemo(() => {
+    if (pageKind === "depart") return DEPART_TYPES;
+    if (pageKind === "arrivee") return ARRIVEE_TYPES;
+    return new Set();
+  }, [pageKind]);
+
+  const pageItems = useMemo(() => {
+    if (!activeTypeSet.size) return items;
+    return items.filter((i) =>
+      activeTypeSet.has((i.type || "").trim().toUpperCase())
     );
+  }, [items, activeTypeSet]);
+
+  // ===== Options et filtres en cascade =====
+
+  const dateOptions = useMemo(() => {
+    const map = new Map();
+    for (const it of pageItems) {
+      if (!it.date) continue;
+      map.set(it.date, (map.get(it.date) || 0) + 1);
+    }
+    return [...map.entries()]
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+  }, [pageItems]);
+
+  const itemsAfterDate = useMemo(() => {
+    if (!selDates.size) return [];
+    return pageItems.filter((i) => selDates.has(i.date || ""));
+  }, [pageItems, selDates]);
+
+  const aeroOptions = useMemo(() => {
+    const map = new Map();
+    for (const it of itemsAfterDate) {
+      const code =
+        pageKind === "depart" ? it.provenance || "" : it.destination || "";
+      if (!code) continue;
+      map.set(code, (map.get(code) || 0) + 1);
+    }
+    return [...map.entries()]
+      .map(([aeroport, count]) => ({ aeroport, count }))
+      .sort((a, b) => a.aeroport.localeCompare(b.aeroport));
+  }, [itemsAfterDate, pageKind]);
+
+  const itemsAfterAero = useMemo(() => {
+    if (!selAero.size) return itemsAfterDate;
+    const check = (it) => {
+      const code =
+        pageKind === "depart" ? it.provenance || "" : it.destination || "";
+      return selAero.has(code);
+    };
+    return itemsAfterDate.filter(check);
+  }, [itemsAfterDate, selAero, pageKind]);
+
+  const volOptions = useMemo(() => {
+    const m = new Map();
+    for (const it of itemsAfterAero) {
+      const num = (it.numero_vol || "").trim();
+      if (!num) continue;
+
+      const h = normalizeHv(it.horaires);
+      if (!m.has(num)) {
+        m.set(num, { pax: 0, heure: h });
+      }
+
+      const o = m.get(num);
+      o.pax += Number(it.pax) || 0;
+
+      if (h && (!o.heure || h < o.heure)) {
+        o.heure = h;
+      }
+    }
+
+    return [...m.entries()]
+      .map(([numero_vol, { pax, heure }]) => ({
+        numero_vol,
+        pax,
+        heure,
+        label: heure ? `${numero_vol} — ${heure}` : numero_vol,
+      }))
+      .sort((a, b) => {
+        if (!a.heure) return 1;
+        if (!b.heure) return -1;
+        return a.heure.localeCompare(b.heure);
+      });
+  }, [itemsAfterAero]);
+
+  const itemsAfterVol = useMemo(() => {
+    if (!selVols.size) return itemsAfterAero;
+    const set = selVols;
+    return itemsAfterAero.filter((i) => set.has((i.numero_vol || "").trim()));
+  }, [itemsAfterAero, selVols]);
+
+  const filtered = useMemo(() => {
+    if (!hasAllRightFilters) return [];
+
+    return itemsAfterVol.filter((i) => {
+      if (selTOs.size && !selTOs.has(i.client_to || "—")) return false;
+
+      const zid = i.zone_id != null ? String(i.zone_id) : "—";
+      if (selZones.size && !selZones.has(zid)) return false;
+
+      if (selHotels.size && !selHotels.has(i.hotel || "—")) return false;
+
+      const obsKey = (i.observation || "").trim() || "—";
+      if (selObs.size && !selObs.has(obsKey)) return false;
+
+      return true;
+    });
+  }, [itemsAfterVol, selTOs, selZones, selHotels, selObs, hasAllRightFilters]);
+
+  const toGroups = useMemo(() => {
+    const m = new Map();
+    for (const it of itemsAfterVol) {
+      const key = it.client_to || "—";
+      m.set(key, (m.get(key) || 0) + (Number(it.pax) || 0));
+    }
+    return [...m.entries()]
+      .map(([name, pax]) => ({ name, pax }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [itemsAfterVol]);
+
+  const zoneGroups = useMemo(() => {
+    const m = new Map();
+    for (const it of itemsAfterVol) {
+      const zid = it.zone_id != null ? String(it.zone_id) : "";
+      if (!zid) continue;
+      const zn = (it.zone_nom || "").trim() || "—";
+      const prev = m.get(zid) || { id: zid, name: zn, pax: 0 };
+      prev.pax += Number(it.pax) || 0;
+      if (zn && zn !== "—") prev.name = zn;
+      m.set(zid, prev);
+    }
+    return [...m.values()].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  }, [itemsAfterVol]);
+
+  const hotelGroups = useMemo(() => {
+    const m = new Map();
+    for (const it of itemsAfterVol) {
+      const key = it.hotel || "—";
+      m.set(key, (m.get(key) || 0) + (Number(it.pax) || 0));
+    }
+    return [...m.entries()]
+      .map(([name, pax]) => ({ name, pax }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [itemsAfterVol]);
+
+  const obsGroups = useMemo(() => {
+    const m = new Map();
+    for (const it of itemsAfterVol) {
+      const o = (it.observation || "").trim() || "—";
+      m.set(o, (m.get(o) || 0) + (Number(it.pax) || 0));
+    }
+    return [...m.entries()]
+      .map(([name, pax]) => ({ name, pax }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [itemsAfterVol]);
+
+  const resetTopGroups = () => {
+    setSelTOs(new Set());
+    setSelZones(new Set());
+    setSelHotels(new Set());
+    setSelObs(new Set());
+  };
+  const resetRight = () => {
+    setSelDates(new Set());
+    setSelAero(new Set());
+    setSelVols(new Set());
+  };
+  const resetAll = () => {
+    resetTopGroups();
+    resetRight();
   };
 
-  const deleteFiche = async (fiche) => {
-    if (!window.confirm(`Supprimer la fiche ${fiche.reference} ?`)) return;
-    try {
-      await api.delete(`fiches-mouvement/${fiche.id}/`);
-      await fetchList();
-    } catch (e) {
-      console.error(e);
-      const detail =
-        e?.response?.data?.detail ||
-        e?.response?.data?.error ||
-        e?.message ||
-        "Suppression impossible.";
-      alert(detail);
+  const allInViewSelected = useMemo(() => {
+    if (!filtered.length) return false;
+    return filtered.every((it) => selectedIds.has(it.id));
+  }, [filtered, selectedIds]);
+
+  const someInViewSelected = useMemo(() => {
+    if (!filtered.length) return false;
+    return filtered.some((it) => selectedIds.has(it.id));
+  }, [filtered, selectedIds]);
+
+  useEffect(() => {
+    if (!headerCheckRef.current) return;
+    headerCheckRef.current.indeterminate =
+      !allInViewSelected && someInViewSelected;
+  }, [allInViewSelected, someInViewSelected]);
+
+  useEffect(() => {
+    if (!hasAllRightFilters || !filtered.length) {
+      setSelectedIds(new Set());
+      return;
     }
+    setSelectedIds((prev) => {
+      if (prev.size > 0) return prev;
+      const n = new Set();
+      for (const it of filtered) n.add(it.id);
+      return n;
+    });
+  }, [filtered, hasAllRightFilters]);
+
+  const selectedRows = useMemo(
+    () => filtered.filter((it) => selectedIds.has(it.id)),
+    [filtered, selectedIds]
+  );
+  const canProceed = selectedRows.length > 0;
+
+  const paxTotalSelected = useMemo(() => sumPax(selectedRows), [selectedRows]);
+
+  const metaNumeroVol = useMemo(() => {
+    if (selVols.size === 1) return Array.from(selVols)[0];
+    const found = selectedRows.find((r) => (r.numero_vol || "").trim());
+    return found?.numero_vol || "";
+  }, [selVols, selectedRows]);
+
+  const metaAeroport = useMemo(() => {
+    const pick = (r) =>
+      pageKind === "depart" ? r.provenance || "" : r.destination || "";
+    const found = selectedRows.find((r) => pick(r));
+    return found ? pick(found) : "";
+  }, [selectedRows, pageKind]);
+
+  const metaDate = useMemo(() => {
+    const dates = selectedRows.map((r) => r.date).filter(Boolean).sort();
+    return dates[0] || isoToday();
+  }, [selectedRows]);
+
+  // ✅ IMPORTANT : on ne crée PAS de fiches ici.
+  const onNext = async () => {
+    if (!canProceed) return;
+
+    const dossierIds = selectedRows
+      .map((r) => r.dossier_id || r.id_dossier || r.dossier || null)
+      .filter(Boolean);
+
+    navigate(`/agence/${agence_id}/fiche-mouvement/ordre`, {
+      state: {
+        items: selectedRows,
+        meta: {
+          numero_vol: metaNumeroVol,
+          heure_vol: normalizeHv(selectedRows[0]?.horaires) || "",
+          aeroport: metaAeroport,
+          date: metaDate,
+          kind: pageKind,
+          fiche_ids: [], // ✅ on ne les a pas encore
+          agence_id,
+          dossier_ids: dossierIds, // ✅ on passe les dossiers pour créer plus tard
+        },
+      },
+    });
   };
+
+  const title =
+    pageKind === "depart"
+      ? "🛫 Mes départs"
+      : pageKind === "arrivee"
+      ? "🛬 Mes arrivées"
+      : "📋 Fiches de mouvement";
+
+  const emptyMsg =
+    pageKind === "depart"
+      ? "Aucun départ trouvé."
+      : pageKind === "arrivee"
+      ? "Aucune arrivée trouvée."
+      : "Aucune fiche trouvée.";
 
   return (
-    <div className="container mt-4">
-      {/* HEADER + boutons d'action */}
-      <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-        <h2 className="m-0">{title}</h2>
+    <div className="fm-shell">
+      <style>{`
+        .fm-group-item{display:flex;align-items:flex-start;margin-bottom:8px}
+        .fm-group-check{margin-top:4px}
+        .fm-group-label{
+          display:flex; align-items:flex-start; justify-content:space-between;
+          gap:10px; width:100%; min-width:0; cursor:pointer;
+        }
+        .fm-group-text{
+          flex:1 1 auto; min-width:0;
+          white-space:normal; overflow:visible; text-overflow:clip;
+          word-break:break-word; line-height:1.15;
+        }
+        .fm-group-pax{flex:0 0 auto; white-space:nowrap}
+      `}</style>
 
-        <div className="d-flex flex-wrap gap-2">
-          <button className="btn btn-outline-secondary" onClick={() => navigate(-1)}>
-            ↩ Retour
-          </button>
+      <main className="fm-main">
+        <div className="d-flex justify-content-end align-items-center mb-3">
+          <div className="d-flex gap-2">
+            <button className="btn btn-outline-secondary" onClick={resetAll} disabled={loading}>
+              Réinitialiser
+            </button>
 
-          <button className="btn btn-outline-primary" onClick={fetchList} disabled={loading}>
-            {loading ? "Actualisation…" : "Actualiser"}
-          </button>
+            {pageKind && (
+              <button
+                type="button"
+                className="btn btn-outline-primary"
+                onClick={() =>
+                  navigate(`/agence/${agence_id}/fiche-mouvement/nouveau?kind=${pageKind}`)
+                }
+              >
+                Nouvelle Fiche de mouvement Manuelle
+              </button>
+            )}
 
-          <div className="btn-group">
             <button
               className="btn btn-primary"
-              onClick={() => navigate(`/agence/${agenceId}/fiche-mouvement`)}
-              title="Créer une nouvelle fiche de mouvement"
+              onClick={onNext}
+              disabled={!canProceed}
+              title={!canProceed ? "Sélectionne au moins une ligne" : ""}
             >
-              + Créer une fiche de mouvement
+              Suivant
             </button>
           </div>
         </div>
-      </div>
 
-      {/* TABLEAU */}
-      <div className="table-responsive">
-        <table className="table table-striped align-middle">
-          <thead className="table-light">
-            <tr>
-              <th>Réf.</th>
-              <th>Type</th>
-              <th>Aéroport</th>
-              <th>Début</th>
-              <th>Fin</th>
-              <th>Hôtel</th>
-              <th>Pax</th>
-              <th>Clients</th>
-              <th>Observation</th>
-              <th className="text-end">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {!loading && items.map((it) => {
-              // heures
-              const startDisplayed = it.date_debut ? new Date(it.date_debut) : (it.date ? new Date(it.date) : null);
-              const endDisplayed = startDisplayed
-                ? new Date(startDisplayed.getTime() + 180 * 60 * 1000)
-                : null;
-              const endIsNextDay = isNextDay(startDisplayed, endDisplayed);
+        <h2 className="mb-2">{title}</h2>
 
-              // champs robustes
-              const hotelLabel = summarizeHotels(it);
-              const paxLabel = extractPax(it);
-              const clientsLabel = extractClients(it);
-              const obsLabel = extractObservation(it);
+        {/* Groupes haut */}
+        <div className="row g-3 mb-3">
+          <div className="col-md-3">
+            <div className="card h-100">
+              <div className="card-header fw-bold">CLIENT/TO</div>
+              <div className="card-body p-3" style={{ maxHeight: 220, overflow: "auto" }}>
+                {toGroups.length ? (
+                  toGroups.map((g) => (
+                    <GroupItem
+                      key={`to_${g.name}`}
+                      id={`to_${g.name}`}
+                      checked={selTOs.has(g.name)}
+                      onToggle={() => toggleSet(setSelTOs, g.name)}
+                      title={g.name}
+                      pax={g.pax}
+                    />
+                  ))
+                ) : (
+                  <div className="text-muted small">—</div>
+                )}
+              </div>
+            </div>
+          </div>
 
-              return (
-                <tr key={it.id}>
-                  <td>{it.reference || "—"}</td>
-                  <td><BadgeType t={it.type} /></td>
-                  <td>{it.aeroport || "—"}</td>
-                  <td>{startDisplayed ? fmtHour(startDisplayed) : "—"}</td>
-                  <td>
-                    {endDisplayed ? fmtHour(endDisplayed) : "—"}
-                    {endDisplayed && endIsNextDay && (
-                      <span className="badge bg-warning text-dark ms-1" title="Le vol termine le lendemain">
-                        +1j
-                      </span>
-                    )}
-                  </td>
-                  <td>{hotelLabel}</td>
-                  <td>{paxLabel}</td>
-                  <td>{clientsLabel}</td>
-                  <td>
-                    <ObservationCell text={obsLabel} max={60} onOpen={setObsFullText} />
-                  </td>
-                  <td className="text-end">
-                    <div className="btn-group">
-                      <button
-                        className="btn btn-sm btn-success"
-                        onClick={() => setSelectedMission(it)}
-                        title="Choisir les ressources (ma flotte / rentout / rideshare)"
-                      >
-                        📄 Choisir ressources
-                      </button>
-                      <button
-                        className="btn btn-sm btn-outline-secondary"
-                        onClick={() => deleteFiche(it)}
-                        title="Supprimer la fiche"
-                      >
-                        🗑️ Supprimer
-                      </button>
-                    </div>
-                  </td>
+          <div className="col-md-3">
+            <div className="card h-100">
+              <div className="card-header fw-bold">ZONES</div>
+              <div className="card-body p-3" style={{ maxHeight: 220, overflow: "auto" }}>
+                {zoneGroups.length ? (
+                  zoneGroups.map((g) => {
+                    const zid = String(g.id);
+                    return (
+                      <GroupItem
+                        key={`zone_${zid}`}
+                        id={`zone_${zid}`}
+                        checked={selZones.has(zid)}
+                        onToggle={() => toggleSet(setSelZones, zid)}
+                        title={g.name}
+                        pax={g.pax}
+                      />
+                    );
+                  })
+                ) : (
+                  <div className="text-muted small">—</div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="col-md-3">
+            <div className="card h-100">
+              <div className="card-header fw-bold">HÔTELS</div>
+              <div className="card-body p-3" style={{ maxHeight: 220, overflow: "auto" }}>
+                {hotelGroups.length ? (
+                  hotelGroups.map((g) => (
+                    <GroupItem
+                      key={`hotel_${g.name}`}
+                      id={`hotel_${g.name}`}
+                      checked={selHotels.has(g.name)}
+                      onToggle={() => toggleSet(setSelHotels, g.name)}
+                      title={g.name}
+                      pax={g.pax}
+                    />
+                  ))
+                ) : (
+                  <div className="text-muted small">—</div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="col-md-3">
+            <div className="card h-100">
+              <div className="card-header fw-bold">OBSERVATION</div>
+              <div className="card-body p-3" style={{ maxHeight: 220, overflow: "auto" }}>
+                {obsGroups.length ? (
+                  obsGroups.map((g) => (
+                    <GroupItem
+                      key={`obs_${g.name}`}
+                      id={`obs_${g.name}`}
+                      checked={selObs.has(g.name)}
+                      onToggle={() => toggleSet(setSelObs, g.name)}
+                      title={g.name}
+                      pax={g.pax}
+                    />
+                  ))
+                ) : (
+                  <div className="text-muted small">—</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Bandeau PAX Total basé sur la sélection */}
+        <div className="d-flex justify-content-between align-items-center mb-2">
+          <h5 className="m-0">Liste des fiches</h5>
+          <div className="fw-bold">PAX Total : {paxTotalSelected}</div>
+        </div>
+
+        {/* Tableau */}
+        <div className="table-responsive">
+          <table className="table table-striped table-hover align-middle">
+            <thead className="table-light">
+              <tr>
+                <th style={{ width: 44 }}>
+                  <input
+                    ref={headerCheckRef}
+                    type="checkbox"
+                    className="form-check-input"
+                    checked={allInViewSelected}
+                    onChange={(e) => selectAllInFiltered(e.target.checked, filtered)}
+                    title="Tout sélectionner (filtre courant)"
+                  />
+                </th>
+                <th>Type</th>
+                <th>Date</th>
+                <th>Hôtel</th>
+                <th>Titulaire</th>
+                <th>Observation</th>
+                <th>Pax</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!loading &&
+                filtered.map((it) => {
+                  const displayHotel = it.hotel || it.zone_nom || it.titulaire || "—";
+                  return (
+                    <tr
+                      key={it.id}
+                      className={selectedIds.has(it.id) ? "table-active" : ""}
+                      onClick={() => toggleRow(it.id)}
+                      style={{ cursor: "pointer" }}
+                    >
+                      <td>
+                        <input
+                          type="checkbox"
+                          className="form-check-input"
+                          checked={selectedIds.has(it.id)}
+                          onChange={() => toggleRow(it.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </td>
+                      <td><BadgeType t={it.type} /></td>
+                      <td>{it.date || "—"}</td>
+                      <td title={displayHotel}>{displayHotel}</td>
+                      <td title={it.titulaire || "—"}>{it.titulaire || "—"}</td>
+                      <td title={(it.observation || "").trim() || "—"}>
+                        {(it.observation || "").trim() || "—"}
+                      </td>
+                      <td>{it.pax ?? "—"}</td>
+                    </tr>
+                  );
+                })}
+              {loading && (
+                <tr>
+                  <td colSpan={7} className="text-center py-4">Chargement…</td>
                 </tr>
-              );
-            })}
-            {loading && (
-              <tr><td colSpan={10} className="text-center py-4">Chargement…</td></tr>
-            )}
-            {!loading && !items.length && (
-              <tr><td colSpan={10} className="text-center text-muted py-4">{emptyMsg}</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              )}
+              {!loading && !filtered.length && (
+                <tr>
+                  <td colSpan={7} className="text-center text-muted py-4">{emptyMsg}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </main>
 
-      {/* Modal Observation */}
-      {obsFullText && (
-        <PortalModal title="Observation complète" onClose={() => setObsFullText(null)}>
-          <div className="alert alert-warning">
-            <strong>Attention :</strong> contenu long — vérifiez les détails avant validation.
-          </div>
-          <div style={{ whiteSpace: "pre-wrap" }}>{obsFullText}</div>
-          <div className="text-end mt-3">
-            <button className="btn btn-warning" onClick={() => setObsFullText(null)}>Fermer</button>
-          </div>
-        </PortalModal>
-      )}
-
-      {/* Modal Affectation */}
-      {selectedMission && (
-        <AssignResourcesModal
-          mission={selectedMission}
-          onClose={() => setSelectedMission(null)}
-          onCompleted={() => {
-            fetchList();
-            setSelectedMission(null);
-          }}
-        />
-      )}
+      <RightRail
+        dateOptions={dateOptions}
+        aeroOptions={aeroOptions}
+        volOptions={volOptions}
+        selDates={selDates}
+        setSelDates={setSelDates}
+        selAero={selAero}
+        setSelAero={setSelAero}
+        selVols={selVols}
+        setSelVols={setSelVols}
+        onResetAll={resetAll}
+        loading={loading}
+        pageKind={pageKind}
+      />
     </div>
   );
 }

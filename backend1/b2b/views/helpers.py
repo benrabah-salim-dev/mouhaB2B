@@ -10,26 +10,41 @@ import pandas as pd
 from django.core.exceptions import PermissionDenied
 from django.utils import timezone
 from rest_framework.permissions import BasePermission
+from decimal import Decimal
+from uuid import UUID
+
+from django.core.files import File
+from django.db.models import Model, QuerySet
+
 
 # ============================================================================
 # Rôles / Agence / Permissions
 # ============================================================================
 
 
+# b2b/helpers.py
+from django.core.exceptions import ObjectDoesNotExist
+
 def _user_role(user) -> Optional[str]:
-    """Retourne 'superadmin', 'adminagence' ou None."""
     if not user or not getattr(user, "is_authenticated", False):
         return None
     if getattr(user, "is_superuser", False):
         return "superadmin"
-    prof = getattr(user, "profile", None)
-    return getattr(prof, "role", None)
-
+    try:
+        return getattr(user, "profile").role
+    except ObjectDoesNotExist:
+        return None
+    except AttributeError:
+        return None
 
 def _user_agence(user):
-    """Retourne l'agence associée au profil (ou None)."""
-    prof = getattr(user, "profile", None)
-    return getattr(prof, "agence", None)
+    try:
+        return getattr(user, "profile").agence
+    except ObjectDoesNotExist:
+        return None
+    except AttributeError:
+        return None
+
 
 
 class IsSuperAdminRole(BasePermission):
@@ -381,23 +396,6 @@ def resolve_airports_and_type(
 # ============================================================================
 
 
-def queryset_dossiers_non_traite(agence):
-    """
-    Retourne un QuerySet des Dossier de l'agence passés dans AUCUN FicheMouvementItem.
-    Utilisé pour masquer les dossiers déjà affectés à une fiche.
-    """
-    from django.db.models import Exists, OuterRef
-    from b2b.models import Dossier, FicheMouvementItem
-
-    used_qs = FicheMouvementItem.objects.filter(dossier_id=OuterRef("pk"))
-    return (
-        Dossier.objects.filter(agence=agence)
-        .annotate(is_used=Exists(used_qs))
-        .filter(is_used=False)
-        .select_related("hotel")
-        .order_by("-heure_arrivee", "-heure_depart", "-id")
-    )
-
 
 # b2b/views/helpers.py (extrait)
 import re
@@ -465,3 +463,75 @@ def _combine_datetime(day_val, time_val):
     else:
         # pas d'heure -> début de journée
         return pd.to_datetime(f"{d.date().isoformat()} 00:00", format="%Y-%m-%d %H:%M", errors="coerce")
+
+
+
+
+# ============================================================================
+# Sérialisation JSON safe
+# ============================================================================
+
+def _fieldfile_to_str(f: File) -> str | None:
+    # FieldFile / ImageFieldFile
+    try:
+        # souvent le plus stable en DB
+        if getattr(f, "name", None):
+            return f.name
+        # optionnel: url si dispo
+        if hasattr(f, "url"):
+            return f.url
+    except Exception:
+        pass
+    return None
+
+
+def json_safe(obj):
+    """
+    Convertit récursivement un objet Python en structure JSON-serializable.
+    """
+    if obj is None:
+        return None
+
+    # primitives
+    if isinstance(obj, (str, int, bool)):
+        return obj
+    if isinstance(obj, float):
+        # éviter NaN/inf en JSON
+        if obj != obj or obj in (float("inf"), float("-inf")):
+            return None
+        return obj
+
+    # dates / heures
+    if isinstance(obj, datetime):
+        if timezone.is_naive(obj):
+            obj = timezone.make_aware(obj, timezone.get_current_timezone())
+        return obj.isoformat()
+    if isinstance(obj, date):
+        return obj.isoformat()
+    if isinstance(obj, time):
+        return obj.strftime("%H:%M:%S")
+
+    # Decimal / UUID
+    if isinstance(obj, Decimal):
+        return float(obj)  # ou str(obj) si tu veux zéro perte
+    if isinstance(obj, UUID):
+        return str(obj)
+
+    # FieldFile / fichiers
+    if isinstance(obj, File):
+        return _fieldfile_to_str(obj)
+
+    # Django objects
+    if isinstance(obj, Model):
+        return getattr(obj, "pk", None) or str(obj)
+    if isinstance(obj, QuerySet):
+        return [json_safe(x) for x in obj]
+
+    # containers
+    if isinstance(obj, dict):
+        return {str(k): json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [json_safe(x) for x in obj]
+
+    # fallback
+    return str(obj)

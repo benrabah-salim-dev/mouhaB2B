@@ -1,23 +1,38 @@
-// src/layout/AppLayout.jsx
-import React, { useEffect } from "react";
+// src/layouts/AppLayout.jsx
+import React, { useEffect, useMemo } from "react";
 import Sidebar from "../Sidebar";
 import TopBar from "../components/TopBar";
 
 export default function AppLayout({
   children,
+  user,
   agenceId,
   agenceNom,
   role,
   onLogout,
   onRefresh,
   refreshing,
-  currentSpace = "agence",     // ✅ on le déstructure ici
-  onChangeSpace,               // ✅ et on reçoit aussi le handler
+  currentSpace = "agence",
+  onChangeSpace,
 }) {
-  // Optionnel : garantir l'état initial non-collapsé au premier render
+  // ✅ reset sidebar à l'ouverture
   useEffect(() => {
     document.body.classList.toggle("sidebar-collapsed", false);
   }, []);
+
+  // ✅ extraction robuste du nom user (aucun refresh / aucun loop)
+  const userName = useMemo(() => {
+    if (!user) return "Utilisateur";
+
+    return (
+      user?.username ??
+      user?.user?.username ??
+      user?.profile?.username ??
+      user?.email ??
+      user?.user?.email ??
+      "Utilisateur"
+    );
+  }, [user]);
 
   return (
     <>
@@ -28,30 +43,50 @@ export default function AppLayout({
         onLogout={onLogout}
         onRefresh={onRefresh}
         refreshing={refreshing}
-        currentSpace={currentSpace}  
+        currentSpace={currentSpace}
       />
 
       <TopBar
         agenceNom={agenceNom}
-        role={role}
+        userName={userName}
         onLogout={onLogout}
-        currentSpace={currentSpace}  
-        onChangeSpace={onChangeSpace} 
+        currentSpace={currentSpace}
+        onChangeSpace={onChangeSpace}
       />
 
       <main
-        className="app-content container-fluid"
+        className="app-main-container"
         style={{
           marginLeft: "var(--app-left)",
           paddingTop: "var(--topbar-h)",
-          transition: "margin-left .2s ease",
-          height: "auto",
+          transition: "margin-left .3s cubic-bezier(0.4, 0, 0.2, 1)",
           minHeight: "100vh",
-          overflow: "visible",
+          display: "flex",
+          flexDirection: "column",
+          backgroundColor: "#f8fafc",
         }}
       >
-        {children}
+        <div
+          className="content-inner container-fluid py-4"
+          style={{
+            flex: 1,
+            width: "100%",
+            maxWidth: "1600px",
+            margin: "0 auto",
+            display: "flex",
+            flexDirection: "column",
+            minWidth: 0,
+          }}
+        >
+          {children}
+        </div>
       </main>
+
+      <style>{`
+        @media (max-width: 768px) {
+          .app-main-container { margin-left: 0 !important; }
+        }
+      `}</style>
     </>
   );
 }

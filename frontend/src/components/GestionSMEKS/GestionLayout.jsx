@@ -1,66 +1,83 @@
-// src/layouts/GestionLayout.jsx
-import React, { useState, useEffect } from "react";
-import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import SidebarGestion from "../ui/SidebarGestion";
-import TopBar from "../ui/TopBar";
+// src/components/GestionSMEKS/GestionLayout.jsx
+import React from "react";
+import { Outlet } from "react-router-dom";
+import SidebarGestion from "./SidebarGestion";
+
+const SIDEBAR_OPEN = 220;   // largeur en px quand ouvert
+const SIDEBAR_CLOSED = 64;  // largeur en px quand fermé
 
 export default function GestionLayout() {
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  const [currentSpace, setCurrentSpace] = useState(
-    localStorage.getItem("app:space") || "agence"
-  );
-
-  useEffect(() => {
-    document.body.style.margin = 0;
-    return () => { document.body.style.margin = ""; };
-  }, []);
-
-  const handleChangeSpace = (spaceKey) => {
-    localStorage.setItem("app:space", spaceKey);
-    setCurrentSpace(spaceKey);
-    // adapte la redirection si besoin
-    navigate("/gestion");
-  };
-
   return (
-    <>
-      <TopBar
-        agenceNom="RENTOUT"
-        role="superadmin"
-        currentSpace={currentSpace}
-        onChangeSpace={handleChangeSpace}
-        onLogout={() => alert("Déconnexion")}
-      />
-      <SidebarGestion currentPath={location.pathname} />
-      <main className="app-main container-fluid py-3">
-        <div className="container-xxl">
+    <div className="gestion-layout-root">
+      {/* Sidebar gestion (à gauche) */}
+      <SidebarGestion />
+
+      {/* Contenu principal */}
+      <main className="gestion-main">
+        <header className="gestion-header">
+          <h1 className="gestion-title">Espace gestion</h1>
+          <p className="gestion-subtitle">
+            Administration des agences et des demandes d’inscription.
+          </p>
+        </header>
+
+        <section className="gestion-content">
           <Outlet />
-        </div>
+        </section>
       </main>
 
       <style>{`
-        :root{
-          --sidebar-w-open: 270px;
-          --sidebar-w-closed: 64px;
-          --topbar-h: 56px;
+        .gestion-layout-root {
+          display: flex;
+          min-height: 100vh;
+          background: #0b1120;
+          color: #0f172a;
         }
-        body{ overflow: hidden; }
-        .app-main{
-          position: fixed;
-          left: var(--sidebar-w-open);
-          right: 0;
-          top: var(--topbar-h);
-          bottom: 0;
-          overflow-y: auto;
-          overflow-x: hidden; /* pas de scroll horizontal */
-          background: #f7f8fa;
+
+        .gestion-main {
+          flex: 1;
+          margin-left: ${SIDEBAR_OPEN}px;
+          padding: 16px 20px;
+          background: #f3f4f6;
+          transition: margin-left .2s ease;
         }
-        body.sidebar-collapsed .app-main{
-          left: var(--sidebar-w-closed);
+
+        /* Quand le sidebar gestion est replié */
+        body.gestion-sidebar-collapsed .gestion-main {
+          margin-left: ${SIDEBAR_CLOSED}px;
+        }
+
+        .gestion-header {
+          margin-bottom: 16px;
+        }
+
+        .gestion-title {
+          font-size: 1.4rem;
+          font-weight: 700;
+          margin: 0;
+          color: #111827;
+        }
+
+        .gestion-subtitle {
+          margin: 4px 0 0;
+          font-size: 0.9rem;
+          color: #6b7280;
+        }
+
+        .gestion-content {
+          background: #ffffff;
+          border-radius: 12px;
+          padding: 16px;
+          box-shadow: 0 10px 25px rgba(15,23,42,0.08);
+        }
+
+        @media (max-width: 768px) {
+          .gestion-main {
+            margin-left: ${SIDEBAR_CLOSED}px;
+            padding: 12px;
+          }
         }
       `}</style>
-    </>
+    </div>
   );
 }

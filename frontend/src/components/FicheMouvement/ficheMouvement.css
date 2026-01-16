@@ -10,10 +10,10 @@
 }
 
 /* Mise en page confortable */
-.fm-wrap { max-width: 1280px; margin: 0 auto; padding: 0 16px 24px; }
+.fm-wrap { max-width: 1400px; margin: 0 auto; padding: 0 16px 24px; }
 .fm-col-left, .fm-col-right { min-width: 0; }
 
-/* Tables génériques (hors aperçu) : pas de débordement */
+/* Tables génériques (hors aperçu) */
 .fm-table-lg table,
 .fm-sec .table {
   width: 100%;
@@ -26,152 +26,99 @@
   max-width: 260px;
 }
 
-/* ---------- APERÇU (exception : on autorise le scroll X ICI seulement) ---------- */
+/* ---------- APERÇU OPTIMISÉ (Mapping) ---------- */
 .fm-preview {
-  overflow-x: auto;          /* <— seul endroit où on scrolle horizontalement */
+  overflow-x: auto;
   border-top: 1px solid #e9ecef;
+  background: #fff;
 }
 
-/* Le tableau d’aperçu doit pouvoir s’étaler en largeur */
 .fm-preview table {
-  width: max(1200px, 100%);  /* au moins 1200px pour garder des selects lisibles */
-  table-layout: auto;        /* laisse respirer les colonnes */
+  width: auto; /* Permet aux colonnes de respirer */
+  min-width: 100%;
+  table-layout: auto !important; 
 }
 
-.fm-preview th,
+/* Header : Autoriser le retour à la ligne pour éviter les "..." */
+.fm-head-label-optimized {
+  font-weight: 700;
+  font-size: 11px !important;
+  color: #111827;
+  text-transform: uppercase;
+  white-space: normal !important; /* Force le retour à la ligne */
+  text-align: center;
+  vertical-align: middle;
+  min-width: 100px;
+  max-width: 130px;
+  line-height: 1.2;
+  padding: 8px 4px !important;
+  background: #f8f9fa;
+}
+
 .fm-preview td {
   white-space: nowrap;
   vertical-align: middle;
   padding: 6px 8px;
+  font-size: 13px;
+  color: #4b5563;
+  border-bottom: 1px solid #f3f4f6;
 }
 
-/* Les selects de mapping dans les entêtes */
-.fm-map-select {
-  min-width: 140px;
-  max-width: 200px;
-}
-@media (max-width: 1200px) {
-  .fm-map-select { min-width: 120px; }
-}
-
-/* Visuel de la 1re ligne d’entête (labels du fichier) */
-.fm-head-label {
-  font-weight: 600;
-  font-size: 12px;
-  color: #111827;
+/* Contrôles compacts */
+.fm-map-select-compact {
+  font-size: 12px !important;
+  padding: 3px 5px !important;
+  height: 30px !important;
+  min-width: 110px;
 }
 
-/* Rend l’entête d’aperçu sticky quand on scrolle verticalement */
+.x-small-tag {
+  font-size: 9px;
+  font-weight: 800;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+/* Sticky Headers */
 .fm-preview thead th {
   position: sticky;
   top: 0;
   z-index: 2;
   background: #f8f9fa;
+  box-shadow: inset 0 -1px 0 #e5e7eb;
 }
 
-/* ===== Layout : grand tableau gauche + sidebar droite (sans scroll interne) ===== */
+/* Layout & Sections */
 .fm-body.twocol {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
   align-items: start;
 }
 
-.fm-col-left { min-width: 0; }
-.fm-col-right.sidebar {
-  position: static;          /* pas de sticky */
-  top: auto;
-  border-left: 1px solid #e5e7eb;
-  padding-left: 12px;
-}
-
-/* ===== Header / actions (non-sticky) ===== */
 .fm-top {
   display:flex; align-items:center; justify-content:space-between;
-  padding:10px 16px; background:#fff; border-bottom:1px solid #e5e7eb;
+  padding:12px 20px; background:#fff; border-bottom:1px solid #e5e7eb;
 }
-.fm-top.sticky { position: static; top:auto; z-index:auto; background:#fff; }
-.fm-title { font-size:22px; font-weight:700; color:#0f172a; margin:0; }
+.fm-title { font-size:20px; font-weight:700; color:#0f172a; margin:0; }
 .fm-actions { display:flex; gap:8px; align-items:center; }
-.fm-sep { width:1px; height:22px; background:#e5e7eb; margin:0 6px; }
-.fm-msg { margin-top:6px; font-size:12px; color:#334155; }
+.fm-sep { width:1px; height:24px; background:#e5e7eb; margin:0 8px; }
 
-/* ===== Sections ===== */
 .fm-sec {
-  position:relative; background:#fff; border:1px solid #e5e7eb;
-  border-radius:10px; margin:0 0 12px; box-shadow:0 1px 2px rgba(16,24,40,.04);
-}
-.fm-sec-head {
-  display:flex; align-items:center; justify-content:space-between;
-  padding:10px 12px; border-bottom:1px solid #f0f2f5;
-}
-.fm-sec-head h3 { font-size:14px; font-weight:700; color:#0f172a; margin:0; }
-.fm-sec-body { padding:12px; }
-
-/* —— Aucune hauteur forcée / Aucun overflow interne —— */
-.fm-sec.fullheight, .fm-sec .fullheight { height:auto; display:block; }
-.fm-table-lg { height:auto; max-height:none; overflow:visible; }
-
-/* ===== Tables : pro & compact ===== */
-.table { margin:0; }
-.table > :not(caption) > * > * { padding:10px 12px; }
-.table thead th { font-size:.9rem; font-weight:700; color:#0f172a; }
-.table-hover tbody tr:hover { background-color:#f9fafb; }
-
-/* En-têtes NON sticky (scroll page uniquement) */
-.fm-table-synth thead th { position: static; background:#f8fafc; z-index:auto; border-top:0; }
-.fm-table-synth td, .fm-table-synth th { padding:10px 12px; font-size:.95rem; }
-.fm-table-synth .rowline { display:flex; align-items:center; gap:10px; }
-.fm-table-synth .badge { font-weight:600; }
-
-/* ===== Empilement sans espace (Synthèse + Détails collés) ===== */
-.fm-col-left .fm-sec.stack { margin:0; }
-.fm-col-left .fm-sec.stack + .fm-sec.stack { margin-top:0; }
-
-.fm-col-left .fm-sec.stack-top {
-  border-bottom-left-radius:0; border-bottom-right-radius:0;
-}
-.fm-col-left .fm-sec.stack-bottom {
-  border-top-left-radius:0; border-top-right-radius:0;
-  margin-top:-1px; /* évite la double bordure */
+  background:#fff; border:1px solid #e5e7eb;
+  border-radius:10px; margin-bottom:16px; box-shadow:0 1px 2px rgba(0,0,0,0.05);
 }
 
-.fm-col-left .fm-sec.stack-top .fm-sec-body { padding-bottom:8px; }
-.fm-col-left .fm-sec.stack-bottom .fm-sec-body { padding-top:8px; }
-
-/* Petit tableau (Détails) : densité & alignement */
-.stack-bottom .table td, .stack-bottom .table th { padding:10px 12px; vertical-align:middle; }
-.stack-bottom .table thead th:first-child,
-.stack-bottom .table tbody td:first-child { text-align:center; width:36px; }
-
-/* Inputs sidebar / chips */
-.form-select-sm { font-size:.9rem; }
-.fm-type-inline { display:flex; gap:8px; flex-wrap:wrap; }
-.fm-chip {
-  border:1px solid #cbd5e1; padding:6px 10px; border-radius:999px;
-  background:#fff; cursor:pointer; font-weight:600; transition: all .15s ease;
+/* Modal */
+.fm-modal-backdrop {
+  position: fixed; inset: 0; background: rgba(15, 23, 42, 0.7);
+  z-index: 2000; display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(2px);
 }
-.fm-chip:hover { background:#f3f4f6; }
-.fm-chip.is-active { background:#0d6efd; color:#fff; border-color:#0d6efd; }
-
-/* ===== Responsive ===== */
-@media (max-width: 1024px) {
-  .fm-body.twocol { grid-template-columns: 1fr; }
-  .fm-col-right.sidebar { border-left:0; padding-left:0; }
+.fm-modal {
+  background: #fff; border-radius: 12px; width: 90%; max-width: 1100px;
+  max-height: 85vh; overflow: hidden; display: flex; flex-direction: column;
 }
-.fm-table { table-layout: fixed; width: 100%; }
-.fm-table th, .fm-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-.fm-flight-list {
-  max-height: 16rem;
-  overflow: auto;
-  border: 1px solid #dee2e6;
-  border-radius: .375rem;
-  padding: .5rem .5rem .25rem;
-  background: #fff;
-}
-
-.fm-flight-item + .fm-flight-item {
-  margin-top: .25rem;
-}
-
+.fm-modal-header { padding: 16px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; }
+.fm-modal-body { padding: 0; overflow-y: auto; }
+.fm-modal-footer { padding: 12px 16px; background: #f8f9fa; border-top: 1px solid #e5e7eb; }

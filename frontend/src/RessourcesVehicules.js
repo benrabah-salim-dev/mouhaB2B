@@ -16,7 +16,7 @@ export default function RessourcesVehicules() {
 
   const [recentlyCreated, setRecentlyCreated] = useState(new Set());
   const [recentlyUpdated, setRecentlyUpdated] = useState(new Set());
-  const [deletingId, setDeletingId] = useState(null); // spinner suppression
+  const [deletingId, setDeletingId] = useState(null);
 
   const prevIdsRef = useRef(new Set());
 
@@ -34,10 +34,9 @@ export default function RessourcesVehicules() {
 
   const getKey = (v) => v?.immatriculation || v?.id;
 
-  // normalise l'URL next de DRF pour notre client `api`
   const followNextUrl = (next) => {
     if (!next) return null;
-    if (next.startsWith("http")) return next; // axios ignorera baseURL
+    if (next.startsWith("http")) return next;
     return next.replace(/^\/+/, "").replace(/^api\/+/, "");
   };
 
@@ -46,7 +45,6 @@ export default function RessourcesVehicules() {
       setLoading(true);
       setMsg("");
       let all = [];
-      // pas de slash initial
       let nextUrl = `vehicules/?agence=${agence_id}`;
 
       while (nextUrl) {
@@ -103,29 +101,31 @@ export default function RessourcesVehicules() {
     formData.append("agence", agence_id);
 
     try {
-      // pas de slash initial
       const res = await api.post(`importer-vehicules/`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
-      const createdArr = res.data?.vehicules_crees || [];
-      const updatedArr = res.data?.vehicules_mis_a_jour || [];
-      const ignoredArr = res.data?.lignes_ignorees || [];
+      // === IMPORTANT : on colle à la réponse du backend ===
+      // Backend renvoie : { detail, created, updated, errors }
+      const createdCount = res.data?.created ?? 0;
+      const updatedCount = res.data?.updated ?? 0;
+      const errorsArr = res.data?.errors ?? [];
 
       setMsg(
-        `Import véhicules : ${createdArr.length} créé(s), ${updatedArr.length} mis à jour, ${ignoredArr.length} ignoré(s).`
+        `Import véhicules : ${createdCount} créé(s), ${updatedCount} mis à jour, ${errorsArr.length} erreur(s).`
       );
+
+      // On transforme les erreurs (simples strings) en objets pour l'affichage
+      const ignoredArr = errorsArr.map((errMsg, idx) => ({
+        ligne: idx + 1,
+        raison: errMsg,
+      }));
       setIgnored(ignoredArr);
 
-      const createdIds = new Set(
-        createdArr.map((v) => v?.immatriculation || v?.id).filter(Boolean)
-      );
-      const updatedIds = new Set(
-        updatedArr.map((v) => v?.immatriculation || v?.id).filter(Boolean)
-      );
-
-      setRecentlyCreated((prev) => new Set([...prev, ...createdIds]));
-      setRecentlyUpdated((prev) => new Set([...prev, ...updatedIds]));
+      // On ne peut pas connaître précisément quelles immatriculations sont nouvelles
+      // donc on se contente de recharger la liste et de marquer tout comme "rafraîchi"
+      setRecentlyCreated(new Set());
+      setRecentlyUpdated(new Set());
 
       e.target.value = null;
       await fetchVehicules();
@@ -143,10 +143,9 @@ export default function RessourcesVehicules() {
 
     try {
       setDeletingId(vehiculeId);
-      await api.delete(`vehicules/${vehiculeId}/`); // pas de slash initial
+      await api.delete(`vehicules/${vehiculeId}/`);
       setVehicules((prev) => prev.filter((v) => String(v.id) !== String(vehiculeId)));
       setMsg("Véhicule supprimé.");
-      // nettoie les marqueurs si besoin
       setRecentlyCreated((prev) => {
         const next = new Set([...prev]);
         next.delete(vehiculeId);
@@ -187,6 +186,22 @@ export default function RessourcesVehicules() {
     (typeof crypto !== "undefined" && crypto.randomUUID
       ? crypto.randomUUID()
       : `row-${idx}`);
+
+  const renderDisponibilite = (v) => {
+    // Si on suit ce qu'on a fait côté backend :
+    // - par défaut vehicule.statut = "disponible"
+    // - quand une mission l'utilise : vehicule.statut = "occupe"
+    const statut = (v.statut || "").toLowerCase();
+
+    if (!statut || statut === "disponible") {
+      return "Disponible";
+    }
+    if (statut === "occupe" || statut === "occupé" || statut === "indisponible") {
+      return "Indisponible";
+    }
+    // fallback lisible si autre valeur
+    return statut || "—";
+  };
 
   return (
     <div className="container mt-4">
@@ -231,10 +246,13 @@ export default function RessourcesVehicules() {
         {msg && <div className="alert alert-info mt-2">{msg}</div>}
         {ignored.length > 0 && (
           <details className="mt-2">
-            <summary>Lignes ignorées ({ignored.length})</summary>
+            <summary>Lignes ignorées / erreurs ({ignored.length})</summary>
             <ul className="mt-2">
               {ignored.map((l, i) => (
-                <li key={`${l.ligne}-${i}`}>Ligne {l.ligne}: {l.raison}</li>
+                <li key={`${l.ligne}-${i}`}>
+                  {l.ligne ? `Ligne ${l.ligne}: ` : ""}
+                  {l.raison}
+                </li>
               ))}
             </ul>
           </details>
@@ -259,7 +277,7 @@ export default function RessourcesVehicules() {
               <tr>
                 <th>Type</th>
                 <th>Marque</th>
-                <th>Model</th>
+                <th>Modèle</th>
                 <th>Capacité</th>
                 <th>Année</th>
                 <th>Immatriculation</th>
@@ -277,11 +295,7 @@ export default function RessourcesVehicules() {
                   <td>{v.capacite ?? v.capacité}</td>
                   <td>{v.annee ?? v.année}</td>
                   <td>{v.immatriculation}</td>
-                  <td>
-                    {(v.disponibilite ?? v.disponibilité ?? v.available)
-                      ? "Disponible"
-                      : "Indisponible"}
-                  </td>
+                  <td>{renderDisponibilite(v)}</td>
                   <td>
                     {recentlyCreated.has(getKey(v)) && (
                       <span className="badge text-bg-success">Nouveau</span>
@@ -292,14 +306,6 @@ export default function RessourcesVehicules() {
                   </td>
                   <td className="text-end">
                     <div className="btn-group">
-                      {/* Exemple d’édition si tu as une page d’édition */}
-                      {/* <button
-                        className="btn btn-sm btn-outline-secondary"
-                        onClick={() => navigate(`/agence/${agence_id}/vehicules/${v.id}/edit`)}
-                        title="Modifier"
-                      >
-                        ✏️
-                      </button> */}
                       <button
                         className="btn btn-sm btn-outline-danger"
                         onClick={() => handleDeleteVehicule(v.id)}
@@ -315,8 +321,9 @@ export default function RessourcesVehicules() {
 
               {vehicules.length === 0 && (
                 <tr>
-                  {/* 9 colonnes avec Actions */}
-                  <td colSpan={9} className="text-center">Aucun véhicule</td>
+                  <td colSpan={9} className="text-center">
+                    Aucun véhicule
+                  </td>
                 </tr>
               )}
             </tbody>

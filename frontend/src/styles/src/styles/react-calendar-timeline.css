@@ -1,0 +1,38 @@
+/* === React Calendar Timeline custom grid === */
+
+.react-calendar-timeline {
+  background: #fff;
+}
+
+/* lignes verticales (heures) */
+.react-calendar-timeline .rct-vertical-lines .rct-vl {
+  border-left: 1px solid #e5e7eb;
+}
+
+/* lignes horizontales (ressources) */
+.react-calendar-timeline .rct-horizontal-lines .rct-hl {
+  border-top: 1px solid #e5e7eb;
+}
+
+/* lignes sidebar */
+.react-calendar-timeline .rct-sidebar-row {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+/* header */
+.react-calendar-timeline .rct-header-root {
+  border-bottom: 1px solid #d1d5db;
+}
+
+/* items (missions) */
+.react-calendar-timeline .rct-item {
+  border-radius: 4px;
+  background: #2563eb;
+  color: white;
+  font-size: 12px;
+}
+
+/* texte item */
+.react-calendar-timeline .rct-item-content {
+  padding: 2px 6px;
+}

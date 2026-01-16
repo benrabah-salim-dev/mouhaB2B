@@ -1,6 +1,6 @@
 // src/pages/LoginPage.jsx
 import React, { useState, useContext, useEffect, useRef } from "react";
-import { useNavigate, Link } from "react-router-dom"; // 👈 ajout Link
+import { useNavigate, Link } from "react-router-dom";
 import { AuthContext } from "../context/AuthContext";
 import logoUrl from "../assets/SMEKSLogoLogin.png";
 
@@ -45,17 +45,27 @@ export default function LoginPage() {
       const u = username.trim();
       await login(u, password);
 
+      // gérer "se souvenir de moi"
       if (remember) localStorage.setItem("rememberedUsername", u);
       else localStorage.removeItem("rememberedUsername");
 
-      const saved = JSON.parse(localStorage.getItem("userData") || "{}");
-      if (saved?.role === "superadmin") {
-        navigate("/dashboard/superadmin", { replace: true });
-      } else if (saved?.agence_id) {
-        navigate(`/agence/${saved.agence_id}/dashboard`, { replace: true });
-      } else {
-        navigate("/dashboard", { replace: true });
-      }
+      // récupérer les infos stockées par AuthContext (user, role, agence_id, …)
+
+
+const saved = JSON.parse(localStorage.getItem("userData") || "{}");
+const role = (saved?.role || "").toLowerCase();
+const agenceId = saved?.agence_id ?? null;
+
+// 🔥 DIFFERENCIATION SUPERADMIN / ADMIN
+if (role === "superadmin") {
+  navigate("/gestion/agences/demandes", { replace: true });
+} else if (agenceId) {
+  navigate(`/agence/${agenceId}/dashboard`, { replace: true });
+} else {
+  navigate("/dashboard", { replace: true });
+}
+
+
     } catch (err) {
       const status = err?.response?.status;
       if (status === 401) setError("Nom d’utilisateur ou mot de passe incorrect.");
@@ -174,17 +184,14 @@ export default function LoginPage() {
           {/* --- Bloc Inscription agence --- */}
           <div className="text-center mt-3">
             <small className="text-muted d-block">Nouvelle agence ?</small>
-
-            
-
-             <button
+            <button
               type="button"
               className="btn btn-outline-secondary btn-sm mt-2"
-              onClick={() => navigate('/inscription-agence')}
+              onClick={() => navigate("/inscription-agence")}
             >
               Créer un compte agence
-            </button> 
-            </div>
+            </button>
+          </div>
 
           <div className="text-center mt-3">
             <small className="text-muted">Besoin d’aide ? Contactez votre administrateur.</small>

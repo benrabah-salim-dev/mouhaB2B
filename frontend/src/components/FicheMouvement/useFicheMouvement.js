@@ -4,23 +4,26 @@ import * as XLSX from "xlsx";
 import api from "../../api";
 import { AuthContext } from "../../context/AuthContext";
 
-/** ========= Helpers: dates / heures ========= **/
+/** ========= Helpers: nombres ========= **/
+function parseIntLoose(v) {
+  if (v === null || v === undefined) return 0;
+  let s = String(v).trim();
+  s = s.replace(/,/g, "."); // virgule -> point
+  const m = s.match(/[-+]?\d*\.?\d+/);
+  if (!m) return 0;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? Math.round(n) : 0;
+}
 
+/** ========= Helpers: dates / heures ========= **/
 const EXCEL_EPOCH = new Date(Date.UTC(1899, 11, 30));
 
-const safeDate = (v) => {
-  try {
-    const d = new Date(v);
-    return isNaN(d.getTime()) ? null : d;
-  } catch {
-    return null;
-  }
-};
 function fromExcelDate(n) {
   if (typeof n !== "number" || !isFinite(n)) return null;
   const ms = Math.round(n * 86400000);
   return new Date(EXCEL_EPOCH.getTime() + ms);
 }
+
 function toYMD(d) {
   if (!(d instanceof Date) || isNaN(d.getTime())) return "";
   const y = d.getFullYear();
@@ -28,6 +31,7 @@ function toYMD(d) {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+
 function toHM(dOrFraction) {
   if (dOrFraction instanceof Date) {
     const hh = String(dOrFraction.getHours()).padStart(2, "0");
@@ -44,7 +48,40 @@ function toHM(dOrFraction) {
   return m ? `${m[1].padStart(2, "0")}:${m[2]}` : "";
 }
 
-/** ========= Normalisation ========== **/
+/**
+ * Normalise en YYYY-MM-DD.
+ * Gère :
+ *  - Date JS
+ *  - serial Excel (number)
+ *  - "YYYY-MM-DD"
+ *  - "DD/MM/YYYY" ou "DD-MM-YYYY"
+ */
+function normalizeDate(value) {
+  if (value === null || value === undefined || value === "") return "";
+
+  if (value instanceof Date) return toYMD(value);
+
+  if (typeof value === "number") {
+    const d = fromExcelDate(value);
+    return d ? toYMD(d) : "";
+  }
+
+  const s = String(value).trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) {
+    const [, dd, mm, yyyy] = m;
+    return `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+  }
+
+  // dernier fallback : Date() (attention: dépend de l'implémentation)
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? "" : toYMD(d);
+}
+
+/** ========= Normalisation texte ========= **/
 const norm = (s) =>
   String(s || "")
     .toLowerCase()
@@ -61,7 +98,7 @@ const normalizeDA = (val) => {
   return "";
 };
 
-/** ========= Champs cibles & mapping ========= **/
+/** ========= Champs cibles ========= **/
 export const TARGET_FIELDS = [
   { key: "date", label: "Date" },
   { key: "horaires", label: "Horaires" },
@@ -82,8 +119,6 @@ export const TARGET_FIELDS = [
   { key: "code_postal", label: "code postal" },
 ];
 
-// Par défaut, on coche les requis “métier” habituels.
-// Tu peux modifier ce preset ; l’UI permet de les cocher/décocher.
 const DEFAULT_REQUIRED = {
   date: true,
   horaires: true,
@@ -104,6 +139,8 @@ const DEFAULT_REQUIRED = {
   code_postal: false,
 };
 
+const NON_BLOCKING_REQUIRED = new Set(["observation"]);
+
 function autoDetectMapping(headers) {
   const H = headers.map((h) => ({ raw: h, n: norm(h) }));
   const pick = (preds) => H.find(({ n }) => preds.some((p) => n.includes(p)))?.raw || "";
@@ -113,9 +150,9 @@ function autoDetectMapping(headers) {
     horaires: pick(["heure", "horaire", "time", "hora", "h/v", "h v"]),
     provenance: pick(["provenance", "origine", "origin", "from", "org"]),
     destination: pick(["destination", "dest", "to", "dst"]),
-    da: pick(["depart", "arrive", "d a", "d/a", "llegada", "salida", "d a", "l s", "ls", "d/a"]),
+    da: pick(["depart", "arrive", "d a", "d/a", "llegada", "salida", "l s", "ls"]),
     num_vol: pick(["vol", "flight", "n vol", "n° vol", "vuelo", "nº vol"]),
-    client_to: pick(["client to", "to", "tour oper", "t o", "t.o", "client / to", "client/ to"]),
+    client_to: pick(["client to", "tour oper", "t o", "t.o", "client / to", "client/ to"]),
     hotel: pick(["hotel", "hôtel"]),
     ref: pick(["ref", "reference", "référence", "ntra.ref", "ref t.o.", "ref to"]),
     titulaire: pick(["titulaire", "titular", "voyageur", "passager", "client", "nom", "tetulaire"]),
@@ -129,7 +166,7 @@ function autoDetectMapping(headers) {
   };
 }
 
-/** ========= Fichier ========= **/
+/** ========= Parse fichier ========= **/
 async function parseExcelFile(file) {
   const buf = await file.arrayBuffer();
   let wb;
@@ -153,26 +190,20 @@ function normalizeRow(raw, map) {
     return hdr ? raw[hdr] : "";
   };
 
-  // Date indépendante (on ne la colle pas à l’heure)
-  let dateStr = g("date");
-  if (dateStr instanceof Date) dateStr = toYMD(dateStr);
-  else if (typeof dateStr === "number") dateStr = toYMD(fromExcelDate(dateStr) || new Date(NaN));
-  else {
-    const d = safeDate(dateStr);
-    dateStr = d ? toYMD(d) : String(dateStr || "");
-  }
+  const dateStr = normalizeDate(g("date"));
 
-  // Heure seule HH:mm
   let heureStr = g("horaires");
   if (heureStr instanceof Date || typeof heureStr === "number") heureStr = toHM(heureStr);
   else heureStr = toHM(heureStr) || String(heureStr || "");
 
   const da = normalizeDA(g("da"));
 
-  const pax = Number(g("pax") || 0) || 0;
-  const adulte = Number(g("adulte") || 0) || 0;
-  const enfants = Number(g("enfants") || 0) || 0;
-  const bb = Number(g("bb_gratuit") || 0) || 0;
+  const paxRaw = parseIntLoose(g("pax"));
+  const adulte = parseIntLoose(g("adulte"));
+  const enfants = parseIntLoose(g("enfants"));
+  const bb = parseIntLoose(g("bb_gratuit"));
+
+  const pax = paxRaw > 0 ? paxRaw : adulte + enfants + bb;
 
   return {
     date: dateStr,
@@ -197,29 +228,39 @@ function normalizeRow(raw, map) {
 
 /** ========= Validation ========= **/
 function validateRow(row, requiredMap) {
-  const msgs = [];
+  const errors = [];
+  const warns = [];
 
   TARGET_FIELDS.forEach(({ key, label }) => {
-    if (requiredMap?.[key]) {
-      const v = row[key];
-      const empty =
-        v === null || v === undefined || String(v).trim() === "" || (typeof v === "number" && isNaN(v));
-      if (empty) msgs.push(`${label} manquant(e)`);
+    if (!requiredMap?.[key]) return;
+
+    const v = row[key];
+    const empty =
+      v === null ||
+      v === undefined ||
+      String(v).trim() === "" ||
+      (typeof v === "number" && isNaN(v));
+
+    if (empty) {
+      const msg = `${label} manquant(e)`;
+      if (NON_BLOCKING_REQUIRED.has(key)) warns.push(msg);
+      else errors.push(msg);
     }
   });
 
-  if (row.date && !/^\d{4}-\d{2}-\d{2}$/.test(row.date)) msgs.push("Date invalide (YYYY-MM-DD)");
-  if (row.horaires && !/^\d{2}:\d{2}$/.test(row.horaires)) msgs.push("Horaires invalide (HH:mm)");
-  if (row.da && !["A", "D"].includes(row.da)) msgs.push("DEPART/ARRIVER invalide (A ou D)");
+  // formats (bloquants)
+  if (row.date && !/^\d{4}-\d{2}-\d{2}$/.test(row.date)) errors.push("Date invalide (YYYY-MM-DD)");
+  if (row.horaires && !/^\d{2}:\d{2}$/.test(row.horaires)) errors.push("Horaires invalide (HH:mm)");
+  if (row.da && !["A", "D"].includes(row.da)) errors.push("DEPART/ARRIVER invalide (A ou D)");
 
   ["pax", "adulte", "enfants", "bb_gratuit"].forEach((k) => {
     if (String(row[k] ?? "").trim() !== "") {
       const n = Number(row[k]);
-      if (!Number.isFinite(n) || n < 0) msgs.push(`${k} invalide (nombre ≥ 0)`);
+      if (!Number.isFinite(n) || n < 0) errors.push(`${k} invalide (nombre ≥ 0)`);
     }
   });
 
-  return msgs;
+  return { errors, warns };
 }
 
 /** ========= Hook ========= **/
@@ -240,8 +281,9 @@ export function useFicheMouvement() {
   const [ignoreErrors, setIgnoreErrors] = useState(false);
 
   const [mappedPreview, setMappedPreview] = useState([]);
-  const [validationErrors, setValidationErrors] = useState([]); // [{index, messages[]}]
-  const [emptyRowIdxs, setEmptyRowIdxs] = useState([]); // index lignes vides
+  // ✅ maintenant: [{ index, level: "error"|"warn", messages: [] }]
+  const [validationErrors, setValidationErrors] = useState([]);
+  const [emptyRowIdxs, setEmptyRowIdxs] = useState([]);
 
   const [lastValidatedRows, setLastValidatedRows] = useState([]);
 
@@ -251,6 +293,7 @@ export function useFicheMouvement() {
   const onFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     setSelectedFile(file);
     setMsg("Fichier chargé. Configurez le mapping puis cliquez sur Valider.");
 
@@ -293,10 +336,11 @@ export function useFicheMouvement() {
       setMsg("Aucun contenu à valider.");
       return;
     }
+
     const mapped = allRows.map((r) => normalizeRow(r, headerMap));
     setLastValidatedRows(mapped);
 
-    const errors = [];
+    const issues = [];
     const empties = [];
 
     mapped.forEach((row, i) => {
@@ -308,31 +352,32 @@ export function useFicheMouvement() {
         empties.push(i);
         return;
       }
-      const msgs = validateRow(row, requiredMap);
-      if (msgs.length) errors.push({ index: i, messages: msgs });
+
+      const { errors, warns } = validateRow(row, requiredMap);
+
+      if (errors.length) issues.push({ index: i, level: "error", messages: errors });
+      if (warns.length) issues.push({ index: i, level: "warn", messages: warns });
     });
 
-    setValidationErrors(errors);
+    setValidationErrors(issues);
     setEmptyRowIdxs(empties);
 
-    if (errors.length === 0) {
+    const nbErrors = issues.filter((x) => x.level === "error").length;
+    const nbWarns = issues.filter((x) => x.level === "warn").length;
+
+    if (nbErrors === 0 && nbWarns === 0) {
       const info = [];
       if (empties.length) info.push(`${empties.length} ligne(s) vide(s) ignorée(s)`);
-      setMsg(`Validation OK — aucune erreur. ${info.join(" • ")}`);
+      setMsg(`Validation OK — aucune anomalie. ${info.join(" • ")}`);
     } else {
       setMsg(
-        `Erreurs détectées : ${errors.length} ligne(s) en anomalie${
+        `Anomalies détectées : ${nbErrors} erreur(s)${nbWarns ? ` • ${nbWarns} warning(s)` : ""}${
           empties.length ? ` • ${empties.length} vide(s) ignorée(s)` : ""
         }.`
       );
     }
   };
 
-  /** Enregistrement :
-   *  - si ignoreErrors === false : on envoie uniquement les lignes valides
-   *  - si ignoreErrors === true  : on envoie toutes les lignes non vides (même en anomalie)
-   *  Le backend recevra mapping, required_fields, ignore_errors
-   */
   const saveAll = async () => {
     if (!selectedFile) {
       setMsg("Aucun fichier sélectionné.");
@@ -346,15 +391,16 @@ export function useFicheMouvement() {
     try {
       setLoading(true);
 
-      // 1) Calcul (ré)validation locale si besoin
+      // 1) (ré)validation locale si besoin
       let mapped = lastValidatedRows;
-      let errors = validationErrors;
+      let issues = validationErrors;
       let empties = emptyRowIdxs;
 
       if (!mapped.length) {
         mapped = allRows.map((r) => normalizeRow(r, headerMap));
-        const tmpErr = [];
+        const tmpIssues = [];
         const tmpEmpty = [];
+
         mapped.forEach((row, i) => {
           const allEmpty = TARGET_FIELDS.every(({ key }) => {
             const v = row[key];
@@ -362,67 +408,82 @@ export function useFicheMouvement() {
           });
           if (allEmpty) {
             tmpEmpty.push(i);
-          } else {
-            const msgs = validateRow(row, requiredMap);
-            if (msgs.length) tmpErr.push({ index: i, messages: msgs });
+            return;
           }
+          const { errors, warns } = validateRow(row, requiredMap);
+          if (errors.length) tmpIssues.push({ index: i, level: "error", messages: errors });
+          if (warns.length) tmpIssues.push({ index: i, level: "warn", messages: warns });
         });
-        errors = tmpErr;
+
+        issues = tmpIssues;
         empties = tmpEmpty;
-        setValidationErrors(tmpErr);
+
+        setValidationErrors(tmpIssues);
         setEmptyRowIdxs(tmpEmpty);
         setLastValidatedRows(mapped);
       }
 
-      // 2) Sélection des lignes à envoyer
+      // 2) Sélection des lignes à envoyer (logique locale)
       const empty = new Set(empties);
       let toSend = mapped
         .map((row, __idx) => ({ ...row, __idx }))
         .filter((r) => !empty.has(r.__idx));
 
+      // ✅ filtre uniquement les erreurs bloquantes (pas les warn)
       if (!ignoreErrors) {
-        const bad = new Set(errors.map((e) => e.index));
+        const bad = new Set(issues.filter((e) => e.level === "error").map((e) => e.index));
         toSend = toSend.filter((r) => !bad.has(r.__idx));
       }
 
-      toSend = toSend.map(({ __idx, ...rest }) => rest);
+      toSend = toSend.map(({ __idx, ...rest }) => ({
+        ...rest,
+        observation: rest.observation ? String(rest.observation).trim() : "",
+      }));
 
       if (!toSend.length) {
         setMsg("Aucune ligne à enregistrer (toutes vides ou invalides).");
         return;
       }
 
-      // 3) Construire le FormData attendu par le backend
+      // 3) Payload vers backend (actuel: FormData + fichier)
       const requiredKeysArray = Object.entries(requiredMap)
         .filter(([_, isReq]) => !!isReq)
         .map(([k]) => k);
 
       const form = new FormData();
       form.append("file", selectedFile);
-      form.append("agence", currentAgenceId);
-      form.append("mapping", JSON.stringify(headerMap));               // { date: "DATE", horaires: "H/V", ... }
-      form.append("required_fields", JSON.stringify(requiredKeysArray)); // ["date","horaires",...]
+      form.append("agence", String(currentAgenceId));
+      form.append("mapping", JSON.stringify(headerMap));
+      form.append("required_fields", JSON.stringify(requiredKeysArray));
       form.append("ignore_errors", ignoreErrors ? "true" : "false");
-      // (facultatif, utile au back si tu veux)
       form.append("filename", filename || selectedFile.name || "");
       form.append("total_rows_client", String(initialTotalRef.current || toSend.length));
 
-      // 4) Appel API
-      const res = await api.post("importer-dossier/", form, {
+      // ✅ (Option future) si tu veux passer aussi les lignes déjà clean (backend peut choisir d'utiliser ça)
+      // form.append("rows_json", JSON.stringify(toSend));
+
+      // 4) Appel API (timeout augmenté)
+      const res = await api.post("/importer-dossier/", form, {
         headers: { "Content-Type": "multipart/form-data" },
+        timeout: 10 * 60 * 1000, // ✅ 10 minutes
       });
 
       // 5) Feedback
       const created = Number(res?.data?.created_count ?? res?.data?.created ?? 0);
       const updated = Number(res?.data?.updated_count ?? res?.data?.updated ?? 0);
 
-      const ignoredCountLocal = ignoreErrors
-        ? empties.length // on a quand même ignoré les totalement vides
-        : (errors?.length || 0) + (empties?.length || 0);
+      const nbErr = (issues || []).filter((x) => x.level === "error").length;
+      const nbWarn = (issues || []).filter((x) => x.level === "warn").length;
 
       setMsg(
         `Enregistrement terminé — ${created} créé(s), ${updated} mis à jour. ` +
-          `${toSend.length} ligne(s) envoyées, ${ignoredCountLocal} ignorée(s) côté client.`
+          `${toSend.length} ligne(s) envoyées. ` +
+          `${empties.length} vide(s) ignorée(s). ` +
+          `${
+            ignoreErrors
+              ? `${nbErr} erreur(s) + ${nbWarn} warning(s) envoyés.`
+              : `${nbErr} erreur(s) bloquantes ignorée(s), ${nbWarn} warning(s) non bloquants.`
+          }`
       );
     } catch (err) {
       const m =
@@ -453,7 +514,6 @@ export function useFicheMouvement() {
   };
 
   return {
-    // état & infos
     msg,
     loading,
     currentAgenceId,
@@ -463,7 +523,6 @@ export function useFicheMouvement() {
     headers,
     allRows,
 
-    // mapping + requis + ignore
     headerMap,
     setHeaderMap,
     requiredMap,
@@ -472,13 +531,11 @@ export function useFicheMouvement() {
     setIgnoreErrors,
     TARGET_FIELDS,
 
-    // aperçu / erreurs
     mappedPreview,
     validationErrors,
     emptyRowIdxs,
     lastValidatedRows,
 
-    // actions
     onFile,
     runValidation,
     saveAll,

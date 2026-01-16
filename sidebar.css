@@ -1,0 +1,26 @@
+/* src/components/Sidebar/sidebar.css */
+.sidebar {
+  --sb-w: 260px;
+  position: sticky; top: 0;
+  height: 100vh;
+  flex: 0 0 var(--sb-w);
+  width: var(--sb-w);
+  transition: width .2s ease, flex-basis .2s ease;
+  overflow: hidden;   /* évite les états "fantômes" */
+  background: #0f172a; color: #fff;
+}
+
+.sidebar.is-collapsed { --sb-w: 64px; }
+
+/* aide reflow */
+.sidebar.sb-reflow { transform: translateZ(0); }
+
+/* le contenu principal doit pouvoir rétrécir */
+.layout { display: flex; min-height: 100vh; }
+.layout .content { flex: 1 1 auto; min-width: 0; }
+
+/* Bouton et liens */
+.sb-toggle { margin: .5rem; }
+.sb-nav { padding: .25rem .5rem; }
+.sb-link { display: block; padding: .5rem .75rem; color: #cbd5e1; text-decoration: none; }
+.sb-link.active { background: #1e293b; color: #fff; border-radius: .5rem; }

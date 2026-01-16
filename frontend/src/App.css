@@ -1,38 +1,26 @@
+/* Conteneur global */
 .App {
-  text-align: center;
-}
-
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
-}
-
-.App-header {
-  background-color: #282c34;
+  display: flex;
   min-height: 100vh;
+  background-color: #f8fafc; /* Fond neutre pro */
+}
+
+/* Le wrapper qui contient la TopBar et la Page */
+.main-wrapper {
+  flex-grow: 1;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  min-width: 0; /* Empêche les éléments larges de casser le layout */
+  
+  /* Synchronisation avec la Sidebar */
+  margin-left: var(--app-left);
+  transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.App-link {
-  color: #61dafb;
-}
-
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+/* La zone de contenu dynamique */
+.page-content {
+  margin-top: var(--topbar-h); /* Pour ne pas être sous la TopBar fixe */
+  padding: 1.5rem;
+  width: 100%;
+  flex-grow: 1;
 }

@@ -1,6 +1,6 @@
-// src/components/TopBar.js
+// src/components/TopBar.jsx
 import React from "react";
-import { FaSignOutAlt, FaBuilding } from "react-icons/fa";
+import { FaSignOutAlt, FaBuilding, FaUserCircle } from "react-icons/fa";
 
 const SPACE_LABELS = {
   agence: "Espace agence",
@@ -11,23 +11,32 @@ const SPACE_LABELS = {
 
 export default function TopBar({
   agenceNom,
-  role,
+  userName,
   onLogout,
   currentSpace = "agence",
   onChangeSpace,
 }) {
   const spaceLabel = SPACE_LABELS[currentSpace] || "Espace";
+
   const otherSpaces = Object.entries(SPACE_LABELS).filter(
     ([key]) => key !== currentSpace
   );
 
-  const canChange = otherSpaces.length > 0;
-  
+  const canChange =
+    otherSpaces.length > 0 && typeof onChangeSpace === "function";
+
+  const handleChangeSpace = (key) => {
+    if (!canChange) return;
+    if (key === currentSpace) return; // ✅ évite appels inutiles
+    onChangeSpace(key);
+  };
+
+  const displayUser = userName && userName !== "Utilisateur" ? userName : "Chargement...";
 
   return (
     <>
       <header
-        className="topbar d-flex align-items-center justify-content-between px-3"
+        className="topbar d-flex align-items-center justify-content-between px-4"
         style={{
           position: "fixed",
           left: "var(--app-left)",
@@ -37,48 +46,50 @@ export default function TopBar({
           background: "#0b1020",
           borderBottom: "1px solid rgba(255,255,255,.08)",
           zIndex: 1080,
-          transition: "left .2s ease",
+          transition: "left .3s ease",
         }}
       >
-        {/* Gauche : agence + rôle + badge espace courant */}
+        {/* GAUCHE : agence + badge espace */}
         <div className="d-flex align-items-center gap-3 text-white">
-          <div className="d-flex align-items-center gap-2">
-            <FaBuilding />
-            <div className="d-flex flex-column">
-              <span className="fw-semibold">{agenceNom || "Mon Agence"}</span>
-              <span className="text-white-50 small">
-                {role === "superadmin" ? "Super Admin" : "Admin Agence"}
-              </span>
-            </div>
+          <div
+            className="d-flex align-items-center gap-2 border-end pe-3"
+            style={{ borderColor: "rgba(255,255,255,0.1)" }}
+          >
+            <FaBuilding className="text-primary" />
+            <span className="fw-bold letter-spacing-1 text-uppercase small">
+              {agenceNom || "Chargement..."}
+            </span>
           </div>
 
-          {/* Espace courant lisible */}
-          <span className="badge rounded-pill bg-light text-dark fw-semibold">
+          <span className="badge rounded-pill bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25 px-3">
             {spaceLabel}
           </span>
         </div>
 
-        {/* Droite : bouton (affiche l’espace courant) + menu (autres espaces) + déconnexion */}
-        <div className="d-flex align-items-center gap-2">
+        {/* DROITE : user + espace + logout */}
+        <div className="d-flex align-items-center gap-3">
+
+
+          {/* Dropdown espace */}
           <div className="dropdown">
             <button
-              className={`btn btn-outline-light btn-sm dropdown-toggle ${!canChange ? "disabled" : ""}`}
+              className="btn btn-outline-light btn-sm rounded-2 dropdown-toggle"
               type="button"
+              disabled={!canChange}
               data-bs-toggle={canChange ? "dropdown" : undefined}
               aria-expanded="false"
-              aria-disabled={!canChange}
-              title={!canChange ? "Aucun autre espace disponible" : "Changer d’espace"}
             >
-              {spaceLabel}
+              Changer d'espace
             </button>
 
             {canChange && (
-              <ul className="dropdown-menu dropdown-menu-end">
+              <ul className="dropdown-menu dropdown-menu-end shadow-lg border-0 mt-2">
+                <li className="dropdown-header">Passer vers :</li>
                 {otherSpaces.map(([key, label]) => (
                   <li key={key}>
                     <button
-                      className="dropdown-item"
-                      onClick={() => onChangeSpace && onChangeSpace(key)}
+                      className="dropdown-item py-2"
+                      onClick={() => handleChangeSpace(key)}
                     >
                       {label}
                     </button>
@@ -88,19 +99,27 @@ export default function TopBar({
             )}
           </div>
 
+          {/* Logout */}
           <button
-            className="btn btn-danger btn-sm d-flex align-items-center gap-2"
+            className="btn btn-danger btn-sm rounded-2 d-flex align-items-center gap-2 px-3"
             onClick={onLogout}
+            title="Se déconnecter"
           >
-            <FaSignOutAlt /> <span>Déconnexion</span>
+            <FaSignOutAlt />
+            <span className="d-none d-sm-inline">Déconnexion</span>
           </button>
         </div>
       </header>
 
       <style>{`
-        :root { --topbar-h: 56px; }
-        @media (max-width: 768px){
-          :root { --topbar-h: 52px; }
+        :root { --topbar-h: 60px; }
+        .letter-spacing-1 { letter-spacing: 0.5px; }
+        .topbar .btn-outline-light {
+          border-color: rgba(255,255,255,0.2);
+          font-size: 0.85rem;
+        }
+        .topbar .btn-outline-light:hover {
+          background: rgba(255,255,255,0.05);
         }
       `}</style>
     </>

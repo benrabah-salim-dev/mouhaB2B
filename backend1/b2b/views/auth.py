@@ -26,6 +26,7 @@ class LoginView(APIView):
     Endpoint de login sécurisé :
     POST {username, password} -> {access, refresh, user, role, agence_id}
     """
+
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -73,15 +74,21 @@ class TokenRefreshAPIView(APIView):
     Option custom si tu préfères /api/login/refresh/ ; sinon garde SimpleJWT /api/token/refresh/
     POST {refresh} -> {access}
     """
+
     permission_classes = [AllowAny]
 
     def post(self, request):
         token = request.data.get("refresh")
         if not token:
-            return Response({"detail": "Refresh token is required."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Refresh token is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             refresh = RefreshToken(token)
-            return Response({"access": str(refresh.access_token)}, status=status.HTTP_200_OK)
+            return Response(
+                {"access": str(refresh.access_token)}, status=status.HTTP_200_OK
+            )
         except TokenError as e:
             return Response({"detail": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -90,6 +97,7 @@ class UserMeAPIView(APIView):
     """
     GET -> renvoie l'utilisateur courant (Authorization: Bearer <access>)
     """
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):

@@ -1,7 +1,5 @@
-// src/components/AjouterVehicule.js (ou .jsx)
 import React, { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-// ⬇️ utilisez le client axios partagé (injecte baseURL + JWT)
 import api from "./api"; // ajuste le chemin si besoin (../../api ou ../api)
 
 const AjouterVehicule = () => {
@@ -14,55 +12,64 @@ const AjouterVehicule = () => {
   const [capacite, setCapacite] = useState("");
   const [annee, setAnnee] = useState("");
   const [immatriculation, setImmatriculation] = useState("");
+  const [louable, setLouable] = useState(false); // État pour la case à cocher "louable"
   const [submitting, setSubmitting] = useState(false);
 
   const [error, setError] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
 
+  // Vérification si l'immatriculation existe déjà
+  const checkImmatriculationExist = async (immatriculation) => {
+    try {
+      const response = await api.get(`vehicules/?immatriculation=${immatriculation}`);
+      return response.data.length > 0; // Retourne true si l'immatriculation existe déjà
+    } catch (err) {
+      console.error("Erreur lors de la vérification de l'immatriculation", err);
+      return false;
+    }
+  };
+
+  // Soumettre le formulaire
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
     setFieldErrors({});
-    if (!agence_id) {
-      setError("L'ID de l'agence est manquant dans l'URL.");
-      return;
-    }
 
-    // Parse nombres -> int
-    const payload = {
-      type,
-      marque: marque.trim(),
-      model: model.trim(), // ⬅️ correspond au champ `model` côté Django
-      capacite: Number(capacite),
-      annee: Number(annee),
-      immatriculation: immatriculation.trim(),
-      agence: Number(agence_id),
-    };
 
-    // validation basique côté front
-    if (!payload.capacite || payload.capacite < 1) {
+    // Validation des champs côté frontend
+    if (!capacite || capacite < 1) {
       setFieldErrors((p) => ({ ...p, capacite: "Capacité invalide" }));
       return;
     }
-    if (!payload.annee || payload.annee < 1900) {
+    if (!annee || annee < 1900) {
       setFieldErrors((p) => ({ ...p, annee: "Année invalide" }));
       return;
     }
 
+    // Préparation des données à envoyer
+    const payload = {
+      type,
+      marque: marque.trim(),
+      modele: model.trim(),
+      capacite: Number(capacite),
+      annee: Number(annee),
+      immatriculation: immatriculation.trim(),
+      agence: Number(agence_id),
+      louer_autres_agences: louable, // Inclure l'état de "louable"
+    };
+
     try {
       setSubmitting(true);
-      await api.post("vehicules/", payload); // baseURL + Authorization déjà gérés
-      navigate(`/agence/${agence_id}/ressources`, { replace: true });
+      // Soumettre les données pour créer le véhicule
+      await api.post("vehicules/", payload); // Base URL + Auth déjà gérés
+      // Naviguer vers la page de ressources de l'agence après l'ajout réussi
+      navigate(`/agence/${agence_id}/ressources/vehicules`, { replace: true });
     } catch (err) {
-      // remonte les erreurs DRF si possibles
       const data = err?.response?.data;
       if (data && typeof data === "object") {
         setFieldErrors(data);
         const nonField =
-          data.detail ||
-          data.non_field_errors?.[0] ||
-          data.error ||
-          "Erreur lors de l'ajout du véhicule.";
+          data.detail || data.non_field_errors?.[0] || data.error || "Erreur lors de l'ajout du véhicule.";
         setError(nonField);
       } else {
         setError("Erreur lors de l'ajout du véhicule.");
@@ -73,12 +80,11 @@ const AjouterVehicule = () => {
     }
   };
 
+  // Afficher les erreurs pour chaque champ
   const FieldError = ({ name }) =>
     fieldErrors?.[name] ? (
       <div className="text-danger small mt-1">
-        {Array.isArray(fieldErrors[name])
-          ? fieldErrors[name].join(", ")
-          : String(fieldErrors[name])}
+        {Array.isArray(fieldErrors[name]) ? fieldErrors[name].join(", ") : String(fieldErrors[name])}
       </div>
     ) : null;
 
@@ -100,7 +106,7 @@ const AjouterVehicule = () => {
             <option value="">Choisir un type</option>
             <option value="bus">Bus</option>
             <option value="minibus">Minibus</option>
-            <option value="MICROBUS">Microbus</option>
+            <option value="microbus">Microbus</option>
             <option value="4x4">4X4</option>
           </select>
           <FieldError name="type" />
@@ -161,9 +167,7 @@ const AjouterVehicule = () => {
         </div>
 
         <div className="mb-3">
-          <label htmlFor="immatriculation" className="form-label">
-            Numéro d'immatriculation
-          </label>
+          <label htmlFor="immatriculation" className="form-label">Numéro d'immatriculation</label>
           <input
             type="text"
             id="immatriculation"
@@ -173,6 +177,20 @@ const AjouterVehicule = () => {
             required
           />
           <FieldError name="immatriculation" />
+        </div>
+
+        {/* Case à cocher "Louable" */}
+        <div className="mb-3 form-check">
+          <input
+            type="checkbox"
+            id="louable"
+            className="form-check-input"
+            checked={louable}
+            onChange={() => setLouable(!louable)}
+          />
+          <label className="form-check-label" htmlFor="louable">
+            Ce véhicule est louable
+          </label>
         </div>
 
         <button type="submit" className="btn btn-primary" disabled={submitting}>

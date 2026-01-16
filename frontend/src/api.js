@@ -14,7 +14,7 @@ export const API_BASE = buildApiBase();
 
 /** Endpoints d'auth (DRF SimpleJWT) */
 const DEFAULT_LOGIN_ENDPOINT = "token/";         // /api/token/
-const DEFAULT_REFRESH_ENDPOINT = "token/refresh/";
+const DEFAULT_REFRESH_ENDPOINT = "login/refresh/";
 const LOGIN_ROUTE = process.env.REACT_APP_LOGIN_ROUTE || "/login";
 const DEFAULT_TIMEOUT_MS = 30000;
 

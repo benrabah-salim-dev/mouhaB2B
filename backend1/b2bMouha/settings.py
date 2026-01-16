@@ -23,18 +23,19 @@ INSTALLED_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
     "django_filters",
-    "b2b",
         "django_extensions",
+            "b2b.apps.B2BConfig",
 ]
 
 # ====== Middleware ======
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    "corsheaders.middleware.CorsMiddleware",  # avant CommonMiddleware
+    "corsheaders.middleware.CorsMiddleware",  
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "b2b.middleware.current_user.CurrentUserMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -86,9 +87,9 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # ====== Internationalisation ======
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
-USE_I18N = True
+TIME_ZONE = "Africa/Tunis"
 USE_TZ = True
+USE_I18N = True
 
 # ====== Static (React + Django) ======
 STATIC_URL = "/static/"
@@ -133,3 +134,20 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Pour imports massifs
 DATA_UPLOAD_MAX_NUMBER_FIELDS = int(config("DATA_UPLOAD_MAX_NUMBER_FIELDS", default=10000))
+
+
+# En DEV : juste afficher le mail dans la console
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = "smtp.gmail.com"
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+
+EMAIL_HOST_USER = "benrabah.salim.dev@gmail.Com"
+EMAIL_HOST_PASSWORD = "bqbd waxq mchj xkcg"
+
+DEFAULT_FROM_EMAIL = "SMEKS <tonmail@gmail.com>"
+
+
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "AIzaSyB9oNOHHMOeYYUFXERyHkGlF2Y3_wFZESA")
