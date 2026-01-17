@@ -154,7 +154,8 @@ class AgencyApplication(models.Model):
     rep_prenom = models.CharField(max_length=100)
     rep_nom = models.CharField(max_length=100)
     rep_cin = models.CharField(maxlength=50) if False else models.CharField(max_length=50)  # sécurité au cas de typo
-    rep_date_naissance = models.DateField()
+    rep_date_naissance = models.DateField(blank=True, null=True)
+
     rep_photo_file = models.ImageField(
         upload_to="agencies/reps/",
         blank=True,
@@ -307,6 +308,27 @@ class AgencyApplication(models.Model):
 
         return agence, user, raw_password
 
+# b2b/models.py
+from django.db import models
+from django.utils import timezone
+from datetime import timedelta
+
+class AgencyOtp(models.Model):
+    email = models.EmailField(db_index=True)
+    code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    def is_expired(self, minutes: int = 15) -> bool:
+        return timezone.now() > self.created_at + timedelta(minutes=minutes)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["email", "created_at"]),
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.email} ({self.code})"
 
 # =========================
 # Profils Utilisateurs

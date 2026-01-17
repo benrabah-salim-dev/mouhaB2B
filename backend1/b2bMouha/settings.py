@@ -11,6 +11,14 @@ SECRET_KEY = 'django-insecure-_)$+#)m-deh&1z8-go@+4k5iy_36--cfys@n6@_eei$rv0chd3
 DEBUG = config("DEBUG", default=True, cast=bool)
 ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "smeks-otp",
+    }
+}
+
+
 # ====== Apps ======
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -145,7 +153,7 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = "benrabah.salim.dev@gmail.Com"
 EMAIL_HOST_PASSWORD = "bqbd waxq mchj xkcg"
 
-DEFAULT_FROM_EMAIL = "SMEKS <tonmail@gmail.com>"
+DEFAULT_FROM_EMAIL = "SMEK'S"
 
 
 MEDIA_URL = "/media/"
