@@ -27,7 +27,7 @@ export default function TopBar({
 
   const handleChangeSpace = (key) => {
     if (!canChange) return;
-    if (key === currentSpace) return; // ✅ évite appels inutiles
+    if (key === currentSpace) return; //  evite appels inutiles
     onChangeSpace(key);
   };
 
@@ -61,15 +61,14 @@ export default function TopBar({
             </span>
           </div>
 
-          <span className="badge rounded-pill bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25 px-3">
-            {spaceLabel}
-          </span>
         </div>
 
         {/* DROITE : user + espace + logout */}
         <div className="d-flex align-items-center gap-3">
 
-
+          <span className="badge rounded-pill bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25 px-3">
+            
+          </span>
           {/* Dropdown espace */}
           <div className="dropdown">
             <button
@@ -79,7 +78,7 @@ export default function TopBar({
               data-bs-toggle={canChange ? "dropdown" : undefined}
               aria-expanded="false"
             >
-              Changer d'espace
+            {spaceLabel}           
             </button>
 
             {canChange && (
@@ -99,15 +98,7 @@ export default function TopBar({
             )}
           </div>
 
-          {/* Logout */}
-          <button
-            className="btn btn-danger btn-sm rounded-2 d-flex align-items-center gap-2 px-3"
-            onClick={onLogout}
-            title="Se déconnecter"
-          >
-            <FaSignOutAlt />
-            <span className="d-none d-sm-inline">Déconnexion</span>
-          </button>
+         
         </div>
       </header>
 

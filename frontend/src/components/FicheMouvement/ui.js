@@ -1,10 +1,58 @@
 import React from "react";
 
 /* Libellés */
-export const labelType = (t) =>
-  t === "D" ? "Départ" : t === "A" ? "Arrivée" : "";
+export const labelType = (t) => (t === "D" ? "Départ" : t === "A" ? "Arrivée" : "");
 
-/* Composants UI de base */
+/* ===========================
+   PERSISTENCE (RESTORE)
+   =========================== */
+
+/**
+ * Clé unique sessionStorage (par agence et type si tu veux)
+ * -> on met un préfixe stable + agence_id pour éviter les collisions.
+ */
+export const fmCreateStorageKey = (agenceId) =>
+  `fm:create:state:${String(agenceId || "unknown")}`;
+
+export function saveFmCreateState(agenceId, stateObj) {
+  try {
+    const key = fmCreateStorageKey(agenceId);
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({
+        _ts: Date.now(),
+        ...stateObj,
+      })
+    );
+  } catch (e) {
+    // ignore
+  }
+}
+
+export function loadFmCreateState(agenceId) {
+  try {
+    const key = fmCreateStorageKey(agenceId);
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+}
+
+export function clearFmCreateState(agenceId) {
+  try {
+    const key = fmCreateStorageKey(agenceId);
+    sessionStorage.removeItem(key);
+  } catch (e) {
+    // ignore
+  }
+}
+
+/* ===========================
+   UI Components
+   =========================== */
+
 export function Section({ title, disabled, children, right, className = "" }) {
   return (
     <div className={`fm-sec ${disabled ? "is-disabled" : ""} ${className}`}>
@@ -46,8 +94,7 @@ export function TopSummaryBar({
   onCreate,
   creating,
 }) {
-  const joinFull = (arr = []) =>
-    arr.map((s) => String(s || "").trim()).filter(Boolean);
+  const joinFull = (arr = []) => arr.map((s) => String(s || "").trim()).filter(Boolean);
   const titleJoin = (arr) => joinFull(arr).join(", ");
 
   const KV = ({ label, value, title }) => (
@@ -65,26 +112,11 @@ export function TopSummaryBar({
         <KV label="Type" value={tCode ? labelType(tCode) : "—"} />
         <KV label="Date" value={dateSel} />
         <KV label="Aéroport" value={airportSel} />
-        <KV
-          label="Vols"
-          value={joinFull(flightsSel).join(" · ")}
-          title={titleJoin(flightsSel)}
-        />
-        <KV
-          label="TO"
-          value={joinFull(tosSel).join(" · ")}
-          title={titleJoin(tosSel)}
-        />
-        <KV
-          label="Zones"
-          value={joinFull(villesSel).join(" · ")}
-          title={titleJoin(villesSel)}
-        />
-        <KV
-          label="Hôtels"
-          value={joinFull(hotelsSel).join(" · ")}
-          title={titleJoin(hotelsSel)}
-        />
+        <KV label="Vols" value={joinFull(flightsSel).join(" · ")} title={titleJoin(flightsSel)} />
+        <KV label="TO" value={joinFull(tosSel).join(" · ")} title={titleJoin(tosSel)} />
+        <KV label="Zones" value={joinFull(villesSel).join(" · ")} title={titleJoin(villesSel)} />
+        <KV label="Hôtels" value={joinFull(hotelsSel).join(" · ")} title={titleJoin(hotelsSel)} />
+
         <div className="kv kpi">
           <div className="kpi-pair">
             <div className="kpi-num" aria-label="dossiers">
@@ -113,11 +145,7 @@ export function TopSummaryBar({
           value={movementName}
           onChange={(e) => setMovementName(e.target.value)}
         />
-        <button
-          className="btn btn-success btn-sm"
-          onClick={onCreate}
-          disabled={creating || !selectedCount}
-        >
+        <button className="btn btn-success btn-sm" onClick={onCreate} disabled={creating || !selectedCount}>
           {creating ? "Création..." : `Créer (${selectedCount})`}
         </button>
       </div>

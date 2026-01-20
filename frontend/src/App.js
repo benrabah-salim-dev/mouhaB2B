@@ -34,7 +34,6 @@ import DashboardAgence from "./DashboardAgence";
 import AjouterDossier from "./AjouterDossier";
 import AjouterOrdreMission from "./AjouterOrdreMission";
 import ImporterDossier from "./ImporterDossier";
-import DossiersTable from "./components/DossiersTable";
 import LoginPage from "./components/Login";
 import HotelList from "./HotelList";
 import AgenceRessourcesHub from "./RessourcesAgence";
@@ -287,10 +286,7 @@ export default function App() {
             path="/mission/:mission_id/ajouter-ordre"
             element={<AjouterOrdreMission />}
           />
-          <Route
-            path="/agence/:agence_id/dossiers"
-            element={<DossiersTable />}
-          />
+          
           <Route
             path="/importer-dossier/:agence_id"
             element={<ImporterDossier />}

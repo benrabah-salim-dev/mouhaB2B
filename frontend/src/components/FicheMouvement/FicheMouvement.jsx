@@ -1,9 +1,13 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import "./ficheMouvement.css";
 import { useFicheMouvement } from "./useFicheMouvement";
-import { Link } from "react-router-dom";
+import { useLocation } from "react-router-dom";
+
+const STORAGE_KEY = "fm-import-state:v1";
 
 export default function FicheMouvement() {
+  const location = useLocation();
+
   const vm = useFicheMouvement();
   const {
     msg, loading, currentAgenceId,
@@ -22,6 +26,65 @@ export default function FicheMouvement() {
   const hasBlockingErrors = Array.isArray(validationErrors)
     && validationErrors.some((e) => e?.level === "error");
   const blocking = hasBlockingErrors && !ignoreErrors;
+
+  /* ============================
+     ✅ 1) RESTORE AU MONTAGE
+     ============================ */
+  useEffect(() => {
+    // 1) Si tu reviens depuis une autre page avec un flag (optionnel)
+    const shouldRestore = location.state?.restoreFmState;
+
+    // 2) Sinon, on restore quand même si on a un état en localStorage
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+
+    // si tu veux restaurer uniquement quand tu reviens avec state:
+    // if (!shouldRestore) return;
+
+    try {
+      const saved = JSON.parse(raw);
+
+      // Restore mapping / required / ignoreErrors
+      if (saved?.headerMap) setHeaderMap(saved.headerMap);
+      if (saved?.requiredMap) setRequiredMap(saved.requiredMap);
+      if (typeof saved?.ignoreErrors === "boolean") setIgnoreErrors(saved.ignoreErrors);
+
+      // Optionnel: message (sinon garde le msg actuel)
+      // if (saved?.msg) setMsg(saved.msg);
+
+    } catch (e) {
+      console.warn("FM restore failed:", e);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ============================
+     ✅ 2) PERSIST À CHAQUE CHANGEMENT IMPORTANT
+     ============================ */
+  useEffect(() => {
+    try {
+      const payload = {
+        headerMap: headerMap || {},
+        requiredMap: requiredMap || {},
+        ignoreErrors: !!ignoreErrors,
+        // Tu peux aussi stocker le msg si tu veux
+        // msg: msg || "",
+        // currentAgenceId: currentAgenceId || null,
+        ts: Date.now(),
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    } catch (e) {
+      // ignore
+    }
+  }, [headerMap, requiredMap, ignoreErrors]);
+
+  /* ============================
+     ✅ 3) Clear doit aussi clear le storage
+     ============================ */
+  const clearAllWithStorage = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    clearAll();
+  };
 
   const onSelectMap = (targetKey, headerName) => {
     const next = { ...(headerMap || {}) };
@@ -85,14 +148,26 @@ export default function FicheMouvement() {
             📁 Importer Excel
             <input type="file" accept=".xls,.xlsx,.csv" onChange={onFile} hidden disabled={loading} />
           </label>
-          <button className="btn btn-outline-danger btn-sm" onClick={clearAll}>Vider</button>
-          
+
+          <button className="btn btn-outline-danger btn-sm" onClick={clearAllWithStorage}>
+            Vider
+          </button>
+
           <div className="fm-sep" />
 
-          <button className="btn btn-outline-primary btn-sm" disabled={!selectedFile || loading} onClick={runValidation}>
+          <button
+            className="btn btn-outline-primary btn-sm"
+            disabled={!selectedFile || loading}
+            onClick={runValidation}
+          >
             ✅ Valider
           </button>
-          <button className={`btn btn-sm ${blocking ? "btn-outline-success" : "btn-success"}`} onClick={saveAll} disabled={!selectedFile || loading}>
+
+          <button
+            className={`btn btn-sm ${blocking ? "btn-outline-success" : "btn-success"}`}
+            onClick={saveAll}
+            disabled={!selectedFile || loading}
+          >
             💾 Enregistrer tout
           </button>
         </div>
@@ -106,18 +181,23 @@ export default function FicheMouvement() {
                 <div className="fm-sec-head">
                   <h3>Configuration du Mapping</h3>
                   {validationErrors.length > 0 && (
-                    <span className="badge bg-danger cursor-pointer" onClick={() => setShowErrors(true)}>
+                    <span
+                      className="badge bg-danger cursor-pointer"
+                      onClick={() => setShowErrors(true)}
+                    >
                       {validationErrors.length} Anomalies
                     </span>
                   )}
                 </div>
-                
+
                 <div className="fm-preview">
                   <table className="table table-bordered table-sm mb-0">
                     <thead>
                       <tr>
                         {TARGET_FIELDS.map((f) => (
-                          <th key={f.key} className="fm-head-label-optimized">{f.label}</th>
+                          <th key={f.key} className="fm-head-label-optimized">
+                            {f.label}
+                          </th>
                         ))}
                       </tr>
                       <tr className="bg-white">
@@ -130,7 +210,9 @@ export default function FicheMouvement() {
                             >
                               <option value="">— Ignorer —</option>
                               {headers.map((h) => (
-                                <option key={`${f.key}-${h}`} value={h}>{h}</option>
+                                <option key={`${f.key}-${h}`} value={h}>
+                                  {h}
+                                </option>
                               ))}
                             </select>
                           </th>
@@ -163,20 +245,20 @@ export default function FicheMouvement() {
                     </tbody>
                   </table>
                 </div>
-                
+
                 <div className="p-3 border-top bg-light">
-                   <div className="form-check form-switch">
-                      <input 
-                        className="form-check-input" 
-                        type="checkbox" 
-                        id="ignore-errors" 
-                        checked={ignoreErrors}
-                        onChange={(e) => setIgnoreErrors(e.target.checked)}
-                      />
-                      <label className="form-check-label fw-bold small" htmlFor="ignore-errors">
-                        Ignorer les erreurs bloquantes (enregistrer uniquement les lignes valides)
-                      </label>
-                   </div>
+                  <div className="form-check form-switch">
+                    <input
+                      className="form-check-input"
+                      type="checkbox"
+                      id="ignore-errors"
+                      checked={ignoreErrors}
+                      onChange={(e) => setIgnoreErrors(e.target.checked)}
+                    />
+                    <label className="form-check-label fw-bold small" htmlFor="ignore-errors">
+                      Ignorer les erreurs bloquantes (enregistrer uniquement les lignes valides)
+                    </label>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -188,7 +270,9 @@ export default function FicheMouvement() {
 
           <aside className="fm-col-right sidebar">
             <div className="fm-sec">
-              <div className="fm-sec-head"><h3>Instructions</h3></div>
+              <div className="fm-sec-head">
+                <h3>Instructions</h3>
+              </div>
               <div className="fm-sec-body small text-muted">
                 <ol className="ps-3 mb-0">
                   <li><strong>Importez</strong> votre fichier.</li>
@@ -200,7 +284,10 @@ export default function FicheMouvement() {
             </div>
 
             {errorRows.length > 0 && (
-              <button className="btn btn-outline-danger btn-sm w-100 mb-2" onClick={exportErrorsCSV}>
+              <button
+                className="btn btn-outline-danger btn-sm w-100 mb-2"
+                onClick={exportErrorsCSV}
+              >
                 Exporter les anomalies CSV
               </button>
             )}
@@ -214,7 +301,10 @@ export default function FicheMouvement() {
           <div className="fm-modal" onClick={(e) => e.stopPropagation()}>
             <div className="fm-modal-header bg-danger text-white">
               <h5 className="mb-0">Détails des {validationErrors.length} anomalies</h5>
-              <button className="btn-close btn-close-white" onClick={() => setShowErrors(false)}></button>
+              <button
+                className="btn-close btn-close-white"
+                onClick={() => setShowErrors(false)}
+              />
             </div>
             <div className="fm-modal-body">
               <table className="table table-sm table-striped table-hover mb-0">
@@ -245,7 +335,9 @@ export default function FicheMouvement() {
               </table>
             </div>
             <div className="fm-modal-footer">
-              <button className="btn btn-secondary btn-sm" onClick={() => setShowErrors(false)}>Fermer</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => setShowErrors(false)}>
+                Fermer
+              </button>
             </div>
           </div>
         </div>

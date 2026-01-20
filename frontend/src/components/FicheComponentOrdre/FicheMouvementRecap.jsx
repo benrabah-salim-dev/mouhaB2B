@@ -69,6 +69,24 @@ function kindBadgeClass(kind) {
   return "bg-secondary";
 }
 
+/** ✅ appel bulk schedule avec fallback POST -> PUT -> PATCH */
+async function saveBulkHotelSchedule({ fiche_ids, hotel_schedule }) {
+  const url = "/fiches-mouvement/bulk-hotel-schedule/";
+  const payload = { fiche_ids, hotel_schedule };
+
+  try {
+    return await api.post(url, payload);
+  } catch (e1) {
+    if (e1?.response?.status !== 405) throw e1;
+    try {
+      return await api.put(url, payload);
+    } catch (e2) {
+      if (e2?.response?.status !== 405) throw e2;
+      return await api.patch(url, payload);
+    }
+  }
+}
+
 export default function FicheMouvementRecap() {
   const { state } = useLocation();
   const navigate = useNavigate();
@@ -82,7 +100,6 @@ export default function FicheMouvementRecap() {
   const rawMeta = state?.meta || {};
   const dossierIdsFromMeta = Array.isArray(rawMeta.dossier_ids) ? rawMeta.dossier_ids : [];
 
-  // ✅ fiche_ids sont vides tant qu’on n’a pas “finalisé”
   const [ficheIds, setFicheIds] = useState(Array.isArray(rawMeta.fiche_ids) ? rawMeta.fiche_ids : []);
   const resolvedFicheId = ficheIds?.[0] ?? null;
 
@@ -90,7 +107,6 @@ export default function FicheMouvementRecap() {
   const [loadingVol, setLoadingVol] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // ⚠️ On ne charge le détail fiche que si on a un ficheId (donc après création)
   useEffect(() => {
     if (!resolvedFicheId) return;
     (async () => {
@@ -201,7 +217,6 @@ export default function FicheMouvementRecap() {
       };
     });
 
-  // ✅ créer les fiches SEULEMENT au moment du save
   const ensureFichesCreated = async () => {
     if (Array.isArray(ficheIds) && ficheIds.length) return ficheIds;
 
@@ -217,62 +232,64 @@ export default function FicheMouvementRecap() {
       aeroport: meta.aeroport,
     };
 
-    const { data } = await api.post("dossiers/to-fiche/", body);
+    const { data } = await api.post("/dossiers/to-fiche/", body);
     const created = data?.fiche_ids || [];
     if (!created.length) throw new Error("Création fiches: aucun fiche_id retourné.");
     setFicheIds(created);
     return created;
   };
 
-  const save = async () => {
-    try {
-      setSaving(true);
+const save = async () => {
+  try {
+    setSaving(true);
 
-      // 1) create fiches if needed
-      const ids = await ensureFichesCreated();
+    // 1) create fiches if needed
+    const ids = await ensureFichesCreated();
 
-      // 2) save schedule
-      const schedule = buildHotelSchedule();
+    // 2) build schedule
+    const schedule = buildHotelSchedule();
 
-      const successes = [];
-      const failures = [];
+    // 3) update each fiche with the EXISTING endpoint
+    const successes = [];
+    const failures = [];
 
-      for (const id of ids) {
-        try {
-          await api.post(`/fiches-mouvement/${id}/hotel-schedule/`, {
-            hotel_schedule: schedule,
-          });
-          successes.push(id);
-        } catch (e) {
-          console.error("update fiche error", id, e?.response?.data || e.message);
-          failures.push({ id, error: e?.response?.data || e.message });
-        }
+    for (const id of ids) {
+      try {
+        await api.post(`/fiches-mouvement/${id}/hotel-schedule/`, {
+          hotel_schedule: schedule,
+        });
+        successes.push(id);
+      } catch (e) {
+        console.error("update fiche error", id, e?.response?.data || e.message);
+        failures.push({ id, error: e?.response?.data || e.message });
       }
-
-      if (failures.length && successes.length) {
-        alert(
-          `Certaines fiches ont été mises à jour (${successes.length}), mais ${failures.length} ont échoué.\n` +
-            JSON.stringify(failures.slice(0, 3))
-        );
-        return;
-      }
-      if (failures.length && !successes.length) {
-        alert(`Aucune fiche mise à jour.\n${JSON.stringify(failures.slice(0, 3))}`);
-        return;
-      }
-
-      // ✅ REDIRECT vers TransfertNouvelle (pré-sélection)
-      navigate(`/missions/nouvelle?date=${encodeURIComponent(meta.date)}`, {
-        replace: true,
-        state: { fromRecap: true, fiche_ids: ids, agence_id: meta.agence_id },
-      });
-    } catch (e) {
-      console.error(e);
-      alert(e?.message || "Erreur lors de la finalisation.");
-    } finally {
-      setSaving(false);
     }
-  };
+
+    if (failures.length && successes.length) {
+      alert(
+        `Certaines fiches ont été mises à jour (${successes.length}), mais ${failures.length} ont échoué.\n` +
+          JSON.stringify(failures.slice(0, 3))
+      );
+      return;
+    }
+    if (failures.length && !successes.length) {
+      alert(`Aucune fiche mise à jour.\n${JSON.stringify(failures.slice(0, 3))}`);
+      return;
+    }
+
+    // ✅ redirect
+    navigate(`/missions/nouvelle?date=${encodeURIComponent(meta.date)}`, {
+      replace: true,
+      state: { fromRecap: true, fiche_ids: ids, agence_id: meta.agence_id },
+    });
+  } catch (e) {
+    console.error(e);
+    alert(e?.message || "Erreur lors de la finalisation.");
+  } finally {
+    setSaving(false);
+  }
+};
+
 
   const dayDiffFromBase = (d) => {
     if (!d) return 0;
@@ -282,7 +299,9 @@ export default function FicheMouvementRecap() {
     return Math.round(diffMs / (24 * 60 * 60 * 1000));
   };
 
-  const title = `${kind === "depart" ? "🛫" : kind === "arrivee" ? "🛬" : "📋"} Récapitulatif — ${kindLabel(kind)}`;
+  const title = `${kind === "depart" ? "🛫" : kind === "arrivee" ? "🛬" : "📋"} Récapitulatif — ${kindLabel(
+    kind
+  )}`;
 
   return (
     <div className="container py-3">

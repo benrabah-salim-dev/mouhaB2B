@@ -104,19 +104,7 @@ function RightRail({
 
   return (
     <aside className="fm-right-rail">
-      <div className="d-flex justify-content-end gap-2 mb-3">
-        <button
-          className="btn btn-outline-secondary"
-          onClick={onResetAll}
-          disabled={loading}
-        >
-          Réinitialiser
-        </button>
-        {/* Ici tu avais un bouton Suivant désactivé : on le laisse comme ça */}
-        <button className="btn btn-primary" disabled>
-          {loading ? "…" : "Suivant"}
-        </button>
-      </div>
+
 
       {/* Dates */}
       <div className="mb-3">
@@ -578,9 +566,9 @@ export default function FichesMouvementList() {
       <main className="fm-main">
         <div className="d-flex justify-content-end align-items-center mb-3">
           <div className="d-flex gap-2">
-            <button className="btn btn-outline-secondary" onClick={resetAll} disabled={loading}>
+            {/* <button className="btn btn-outline-secondary" onClick={resetAll} disabled={loading}>
               Réinitialiser
-            </button>
+            </button> */}
 
             {pageKind && (
               <button

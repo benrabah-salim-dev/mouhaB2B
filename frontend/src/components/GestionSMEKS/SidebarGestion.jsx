@@ -1,18 +1,30 @@
-//SidebarGestion.jsx
+// SidebarGestion.jsx
 import React, { useEffect, useState } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   FaTachometerAlt,
   FaBuilding,
   FaChevronDown,
   FaClipboardList,
+  FaSignOutAlt,
 } from "react-icons/fa";
 
 const SIDEBAR_OPEN = 220;   // doit matcher GestionLayout
 const SIDEBAR_CLOSED = 64;
 
+// 👉 Mets ici les clés exactes que tu utilises pour stocker les tokens
+const TOKEN_KEYS = [
+  "access",
+  "refresh",
+  "access_token",
+  "refresh_token",
+  "token",
+  "authToken",
+];
+
 export default function SidebarGestion() {
   const location = useLocation();
+  const navigate = useNavigate();
   const currentPath = location.pathname || "";
 
   const [collapsed, setCollapsed] = useState(
@@ -36,6 +48,34 @@ export default function SidebarGestion() {
     if (currentPath.startsWith("/gestion/suivi")) setOpenSuivi(true);
   }, [currentPath]);
 
+  const clearCookie = (name) => {
+    // tente de supprimer sur plusieurs paths
+    document.cookie = `${name}=; Max-Age=0; path=/; SameSite=Lax`;
+    document.cookie = `${name}=; Max-Age=0; path=/;`;
+  };
+
+const handleLogout = async () => {
+  try {
+    // tentative de logout API  
+
+  } catch (e) {
+    // on ignore, on logout quand même
+  } finally {
+    // purge tokens + état
+    ["access", "refresh", "access_token", "refresh_token", "token"].forEach((k) => {
+      localStorage.removeItem(k);
+      sessionStorage.removeItem(k);
+    });
+
+    localStorage.removeItem("user");
+    sessionStorage.removeItem("user");
+
+    // redirection login
+    navigate("/login", { replace: true });
+  }
+};
+
+
   return (
     <>
       {/* Burger spécifique à la gestion */}
@@ -55,7 +95,7 @@ export default function SidebarGestion() {
           {!collapsed && <div className="fw-bold mt-2">Gestion</div>}
         </div>
 
-        <nav className="d-grid gap-1">
+        <nav className="d-grid gap-1 flex-grow-1">
           {/* Dashboard gestion */}
           <NavLink
             to="/gestion"
@@ -133,7 +173,7 @@ export default function SidebarGestion() {
             </div>
           )}
 
-          {/* ✅ Section : Suivi (missions + OM) */}
+          {/* Section : Suivi (missions + OM) */}
           <button
             type="button"
             className={
@@ -167,6 +207,19 @@ export default function SidebarGestion() {
             </div>
           )}
         </nav>
+
+        {/* ✅ Bouton Déconnexion (en bas) */}
+        <div className="pt-2 mt-2 border-top border-light border-opacity-10">
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="gestion-logout-btn d-flex align-items-center gap-2 w-100 px-3 py-2 rounded"
+            title={collapsed ? "Déconnexion" : undefined}
+          >
+            <FaSignOutAlt />
+            {!collapsed && <span>Déconnexion</span>}
+          </button>
+        </div>
       </aside>
 
       <style>{`
@@ -240,6 +293,17 @@ export default function SidebarGestion() {
           background: #f8f9fa;
           color: #111;
           font-weight: 600;
+        }
+
+        .gestion-logout-btn {
+          background: rgba(255,255,255,.06);
+          border: 1px solid rgba(255,255,255,.10);
+          color: rgba(255,255,255,.85);
+          text-align: left;
+        }
+        .gestion-logout-btn:hover {
+          background: rgba(255,255,255,.10);
+          color: #fff;
         }
       `}</style>
     </>
