@@ -1,12 +1,16 @@
+# backend1/b2b/views/auth.py
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.utils.timezone import now
+
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
+
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
 from ..serializers import UserSerializer
@@ -14,19 +18,36 @@ from .helpers import _user_agence
 
 
 def _get_user_role(user):
-    # Ajuste si tu as un Profile.role (adminagence / superadmin / etc.)
     if user.is_superuser:
         return "superadmin"
     profile = getattr(user, "profile", None)
     return getattr(profile, "role", "adminagence")
 
 
+def _set_refresh_cookie(resp: Response, refresh_token: str) -> None:
+    # Cookie HttpOnly => inaccessible au JS (meilleur contre XSS)
+    resp.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=not settings.DEBUG,   # True en prod HTTPS
+        samesite="Lax",
+        path="/api/auth/",
+        max_age=14 * 24 * 3600,
+    )
+
+
+def _delete_refresh_cookie(resp: Response) -> None:
+    resp.delete_cookie("refresh_token", path="/api/auth/")
+
+
 class LoginView(APIView):
     """
-    Endpoint de login sécurisé :
-    POST {username, password} -> {access, refresh, user, role, agence_id}
+    POST /api/auth/login/
+    Body: {username, password}
+    -> JSON: {access, user, role, agence_id}
+    -> Cookie HttpOnly: refresh_token
     """
-
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -34,70 +55,73 @@ class LoginView(APIView):
         password = request.data.get("password") or ""
 
         if not username or not password:
-            return Response(
-                {"detail": "Identifiants requis (username, password)."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "Identifiants requis."}, status=status.HTTP_400_BAD_REQUEST)
 
         user = authenticate(request=request, username=username, password=password)
         if not user:
-            # Même message générique pour ne pas révéler si l'utilisateur existe
-            return Response(
-                {"detail": "Nom d'utilisateur ou mot de passe incorrect"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+            return Response({"detail": "Nom d'utilisateur ou mot de passe incorrect"}, status=status.HTTP_401_UNAUTHORIZED)
 
-        # Génération des tokens JWT
         refresh = RefreshToken.for_user(user)
         access = refresh.access_token
 
-        # Payload enrichi (facultatif)
-        role = _get_user_role(user)
         agence = _user_agence(user)
-        agence_id = getattr(agence, "id", None)
-
-        return Response(
+        resp = Response(
             {
                 "access": str(access),
-                "refresh": str(refresh),
-                "role": role,
-                "agence_id": agence_id,
+                "role": _get_user_role(user),
+                "agence_id": getattr(agence, "id", None),
                 "user": UserSerializer(user).data,
                 "issued_at": now().isoformat(),
             },
             status=status.HTTP_200_OK,
         )
 
+        _set_refresh_cookie(resp, str(refresh))
+        return resp
 
-class TokenRefreshAPIView(APIView):
-    """
-    Option custom si tu préfères /api/login/refresh/ ; sinon garde SimpleJWT /api/token/refresh/
-    POST {refresh} -> {access}
-    """
 
+class RefreshAccessView(APIView):
+    """
+    POST /api/auth/refresh/
+    -> lit refresh_token dans cookie HttpOnly
+    -> renvoie {access}
+    """
     permission_classes = [AllowAny]
 
     def post(self, request):
-        token = request.data.get("refresh")
+        token = request.COOKIES.get("refresh_token")
         if not token:
-            return Response(
-                {"detail": "Refresh token is required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "Refresh token manquant (cookie)."}, status=status.HTTP_401_UNAUTHORIZED)
+
         try:
             refresh = RefreshToken(token)
-            return Response(
-                {"access": str(refresh.access_token)}, status=status.HTTP_200_OK
-            )
-        except TokenError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+            access = refresh.access_token
+            resp = Response({"access": str(access)}, status=status.HTTP_200_OK)
+            return resp
+        except TokenError:
+            resp = Response({"detail": "Refresh token invalide/expiré."}, status=status.HTTP_401_UNAUTHORIZED)
+            _delete_refresh_cookie(resp)
+            return resp
+
+
+class LogoutView(APIView):
+    """
+    POST /api/auth/logout/
+    -> supprime cookie refresh_token
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        resp = Response({"detail": "Déconnecté."}, status=status.HTTP_200_OK)
+        _delete_refresh_cookie(resp)
+        return resp
 
 
 class UserMeAPIView(APIView):
     """
-    GET -> renvoie l'utilisateur courant (Authorization: Bearer <access>)
+    GET /api/auth/me/
+    Header Authorization: Bearer <access>
     """
-
     permission_classes = [IsAuthenticated]
 
     def get(self, request):

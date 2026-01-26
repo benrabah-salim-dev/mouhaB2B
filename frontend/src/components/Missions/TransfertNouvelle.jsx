@@ -626,6 +626,7 @@ function FleetModal({ open, onClose, onConfirm, agenceId, context }) {
                         <th style={{ width: 160 }}>Adresse actuelle</th>
                         <th style={{ width: 220 }}>Last mission</th>
                         <th style={{ width: 220 }}>Next mission</th>
+                        <th style={{ width: 200 }}>Dernier chauffeur</th>
 
                       </tr>
                     </thead>
@@ -724,6 +725,11 @@ const lastZone =
   <div style={{ fontSize: 12, color: "#6c757d" }}>Début prochaine mission</div>
   <div style={{ fontWeight: 600 }}>{nextStart} / {zoneLabel}</div>
 </td>
+
+  <td>
+    <div style={{ fontSize: 12, color: "#6c757d" }}>Dernier chauffeur</div>
+    <div style={{ fontWeight: 600 }}>{getLastDriverLabel(v) || "—"}</div>
+  </td>
 
                             </tr>
                           );

@@ -704,6 +704,7 @@ class FicheMouvement(models.Model):
     )
     
     observation = models.TextField(null=True, blank=True)
+    remarque = models.TextField(null=True, blank=True)  #  NEW (optionnel pour lagent de transport)
     
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -1482,6 +1483,8 @@ class Mission(models.Model):
     code_postal = models.CharField(max_length=20, null=True, blank=True)
     observation = models.TextField(blank=True, null=True)
     aeroport = models.CharField(max_length=100, blank=True, null=True)
+    remarque = models.TextField(null=True, blank=True)  #  NEW (optionnel pour lagent de transport)
+
 
     chauffeur = models.ForeignKey(
         "b2b.Chauffeur",

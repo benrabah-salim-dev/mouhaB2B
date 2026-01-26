@@ -69,21 +69,33 @@ function kindBadgeClass(kind) {
   return "bg-secondary";
 }
 
-/** ✅ appel bulk schedule avec fallback POST -> PUT -> PATCH */
-async function saveBulkHotelSchedule({ fiche_ids, hotel_schedule }) {
-  const url = "/fiches-mouvement/bulk-hotel-schedule/";
-  const payload = { fiche_ids, hotel_schedule };
+function toMinuteKey(d) {
+  if (!d) return "";
+  const x = d instanceof Date ? d : new Date(d);
+  if (isNaN(x.getTime())) return "";
+  return `${String(x.getHours()).padStart(2, "0")}:${String(x.getMinutes()).padStart(2, "0")}`;
+}
 
+/* ============ API helpers ============ */
+
+async function postHotelScheduleWithOptionalRemark(id, payload) {
   try {
-    return await api.post(url, payload);
+    return await api.post(`/fiches-mouvement/${id}/hotel-schedule/`, payload);
   } catch (e1) {
-    if (e1?.response?.status !== 405) throw e1;
-    try {
-      return await api.put(url, payload);
-    } catch (e2) {
-      if (e2?.response?.status !== 405) throw e2;
-      return await api.patch(url, payload);
+    const status = e1?.response?.status;
+    const data = e1?.response?.data;
+    const msg = typeof data === "string" ? data : JSON.stringify(data || {});
+    const looksLikeUnknownField =
+      msg.toLowerCase().includes("remarque") ||
+      msg.toLowerCase().includes("unknown") ||
+      msg.toLowerCase().includes("unexpected") ||
+      msg.toLowerCase().includes("field");
+
+    if (status === 400 && looksLikeUnknownField) {
+      const { remarque, ...withoutRemark } = payload || {};
+      return await api.post(`/fiches-mouvement/${id}/hotel-schedule/`, withoutRemark);
     }
+    throw e1;
   }
 }
 
@@ -100,12 +112,16 @@ export default function FicheMouvementRecap() {
   const rawMeta = state?.meta || {};
   const dossierIdsFromMeta = Array.isArray(rawMeta.dossier_ids) ? rawMeta.dossier_ids : [];
 
-  const [ficheIds, setFicheIds] = useState(Array.isArray(rawMeta.fiche_ids) ? rawMeta.fiche_ids : []);
+  const [ficheIds, setFicheIds] = useState(
+    Array.isArray(rawMeta.fiche_ids) ? rawMeta.fiche_ids : []
+  );
   const resolvedFicheId = ficheIds?.[0] ?? null;
 
   const [loadedVol, setLoadedVol] = useState(null);
   const [loadingVol, setLoadingVol] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const [remarque, setRemarque] = useState("");
 
   useEffect(() => {
     if (!resolvedFicheId) return;
@@ -145,6 +161,9 @@ export default function FicheMouvementRecap() {
     fiche_id: resolvedFicheId,
     agence_id: rawMeta.agence_id ?? agence_id ?? null,
     dossier_ids: dossierIdsFromMeta,
+
+    returnTo: state?.returnTo || null,
+    restoreFilters: state?.restoreFilters || null,
   };
 
   const baseDay = useMemo(() => {
@@ -171,6 +190,9 @@ export default function FicheMouvementRecap() {
     return Array.from(map.entries()).map(([hotel, pax]) => ({ hotel, pax }));
   }, [items, loadedVol?.hotel_schedule]);
 
+
+  const hasSingleHotel = useMemo(() => hotelRows.length === 1, [hotelRows.length]);
+
   const paxTotal = useMemo(
     () => hotelRows.reduce((a, r) => a + (Number(r.pax) || 0), 0),
     [hotelRows]
@@ -178,16 +200,26 @@ export default function FicheMouvementRecap() {
 
   const [endByHotel, setEndByHotel] = useState({});
 
+  // ✅ baseline par hôtel (heure initiale estimée à la minute)
+  const [baselineByHotel, setBaselineByHotel] = useState({});
+  // ✅ hotels réellement modifiés (diff ≥ 1 minute)
+  const [changedHotels, setChangedHotels] = useState(() => new Set());
+
   useEffect(() => {
     const init = {};
+    const baseLine = {};
     if (!hotelRows.length) {
       setEndByHotel(init);
+      setBaselineByHotel(baseLine);
+      setChangedHotels(new Set());
       return;
     }
 
     const hv = normalizeHeureVol(meta.heure_vol);
     if (!hv) {
       setEndByHotel(init);
+      setBaselineByHotel(baseLine);
+      setChangedHotels(new Set());
       return;
     }
 
@@ -198,12 +230,32 @@ export default function FicheMouvementRecap() {
     const deltaMinutes = kind === "depart" ? -180 : 180;
     const estimated = addMinutes(base, deltaMinutes);
 
-    for (const row of hotelRows) init[row.hotel] = new Date(estimated);
+    for (const row of hotelRows) {
+      init[row.hotel] = new Date(estimated);
+      baseLine[row.hotel] = toMinuteKey(estimated); // baseline minute
+    }
+
     setEndByHotel(init);
+    setBaselineByHotel(baseLine);
+    setChangedHotels(new Set()); // reset
   }, [hotelRows, meta.heure_vol, meta.date, kind]);
 
-  const handleEndChange = (hotel, valueHHMM) =>
-    setEndByHotel((p) => ({ ...p, [hotel]: fromHHMMToDate(valueHHMM, meta) }));
+  const handleEndChange = (hotel, valueHHMM) => {
+    const nextDate = fromHHMMToDate(valueHHMM, meta);
+
+    setEndByHotel((p) => ({ ...p, [hotel]: nextDate }));
+
+    const nextKey = toMinuteKey(nextDate);
+    const baseKey = (baselineByHotel?.[hotel] || "").trim();
+
+    setChangedHotels((prev) => {
+      const n = new Set(prev);
+      // ✅ must be different at least 1 minute (minute-key diff)
+      if (nextKey && baseKey && nextKey !== baseKey) n.add(hotel);
+      else n.delete(hotel);
+      return n;
+    });
+  };
 
   const buildHotelSchedule = () =>
     hotelRows.map((r) => {
@@ -239,57 +291,102 @@ export default function FicheMouvementRecap() {
     return created;
   };
 
-const save = async () => {
-  try {
-    setSaving(true);
+  const allHotelsHaveTime = useMemo(() => {
+    if (!hotelRows.length) return false;
+    return hotelRows.every((r) => {
+      const d = endByHotel[r.hotel];
+      if (!d) return false;
+      const hh = hhmmFromDate(d);
+      return /^\d{2}:\d{2}$/.test(hh);
+    });
+  }, [hotelRows, endByHotel]);
 
-    // 1) create fiches if needed
-    const ids = await ensureFichesCreated();
+  // ✅ strict: must be DIFFERENT vs baseline for every hotel
+  const allHotelsChanged = useMemo(() => {
+  if (!hotelRows.length) return false;
 
-    // 2) build schedule
-    const schedule = buildHotelSchedule();
+  // ✅ 1 seul hôtel => pas besoin de modifier l'heure
+  if (hotelRows.length === 1) return true;
 
-    // 3) update each fiche with the EXISTING endpoint
-    const successes = [];
-    const failures = [];
+  // ✅ 2+ hôtels => on garde la règle stricte
+  return changedHotels.size === hotelRows.length;
+}, [changedHotels, hotelRows.length]);
 
-    for (const id of ids) {
-      try {
-        await api.post(`/fiches-mouvement/${id}/hotel-schedule/`, {
-          hotel_schedule: schedule,
-        });
-        successes.push(id);
-      } catch (e) {
-        console.error("update fiche error", id, e?.response?.data || e.message);
-        failures.push({ id, error: e?.response?.data || e.message });
+
+  const canSave = allHotelsHaveTime && allHotelsChanged && !loadingVol && !saving;
+
+  const save = async () => {
+    try {
+      setSaving(true);
+
+      if (!allHotelsHaveTime) {
+        alert("Merci de renseigner une heure pour chaque hôtel.");
+        return;
       }
-    }
-
-    if (failures.length && successes.length) {
+      if (!allHotelsChanged) {
       alert(
-        `Certaines fiches ont été mises à jour (${successes.length}), mais ${failures.length} ont échoué.\n` +
-          JSON.stringify(failures.slice(0, 3))
+        hotelRows.length === 1
+          ? "Merci de renseigner l’heure de l’hôtel."
+          : "Merci de modifier l’horaire de chaque hôtel (différent d’au moins 1 minute)."
       );
       return;
     }
-    if (failures.length && !successes.length) {
-      alert(`Aucune fiche mise à jour.\n${JSON.stringify(failures.slice(0, 3))}`);
-      return;
+
+
+      const ids = await ensureFichesCreated();
+      const schedule = buildHotelSchedule();
+
+      const successes = [];
+      const failures = [];
+
+      for (const id of ids) {
+        try {
+          await postHotelScheduleWithOptionalRemark(id, {
+            hotel_schedule: schedule,
+            remarque: (remarque || "").trim() || undefined,
+          });
+          successes.push(id);
+        } catch (e) {
+          console.error("update fiche error", id, e?.response?.data || e.message);
+          failures.push({ id, error: e?.response?.data || e.message });
+        }
+      }
+
+      if (failures.length && successes.length) {
+        alert(
+          `Certaines fiches ont été mises à jour (${successes.length}), mais ${failures.length} ont échoué.\n` +
+            JSON.stringify(failures.slice(0, 3))
+        );
+        return;
+      }
+      if (failures.length && !successes.length) {
+        alert(`Aucune fiche mise à jour.\n${JSON.stringify(failures.slice(0, 3))}`);
+        return;
+      }
+
+      const fallback =
+        meta.kind === "arrivee"
+          ? `/agence/${meta.agence_id}/mes-arrivees`
+          : `/agence/${meta.agence_id}/mes-departs`;
+
+      const returnTo = meta.returnTo || fallback;
+
+      navigate(returnTo, {
+        replace: true,
+        state: {
+          restoreFilters: meta.restoreFilters || null,
+          fromRecap: true,
+          fiche_ids: ids,
+          agence_id: meta.agence_id,
+        },
+      });
+    } catch (e) {
+      console.error(e);
+      alert(e?.message || "Erreur lors de la finalisation.");
+    } finally {
+      setSaving(false);
     }
-
-    // ✅ redirect
-    navigate(`/missions/nouvelle?date=${encodeURIComponent(meta.date)}`, {
-      replace: true,
-      state: { fromRecap: true, fiche_ids: ids, agence_id: meta.agence_id },
-    });
-  } catch (e) {
-    console.error(e);
-    alert(e?.message || "Erreur lors de la finalisation.");
-  } finally {
-    setSaving(false);
-  }
-};
-
+  };
 
   const dayDiffFromBase = (d) => {
     if (!d) return 0;
@@ -306,13 +403,26 @@ const save = async () => {
   return (
     <div className="container py-3">
       <div className="d-flex justify-content-between align-items-center mb-3">
-        <button className="btn btn-outline-secondary" onClick={() => navigate(-1)}>
-          ← Retour
-        </button>
+        <button
+  className="btn btn-outline-secondary"
+  onClick={() => {
+    if (meta?.returnTo) {
+      navigate(meta.returnTo, {
+        replace: true,
+        state: { restoreFilters: meta.restoreFilters || null },
+      });
+    } else {
+      navigate(-1);
+    }
+  }}
+>
+  ← Retour
+</button>
+
 
         <div className="d-flex align-items-center gap-2">
           <span className={`badge ${kindBadgeClass(kind)} px-3 py-2`}>{kindLabel(kind)}</span>
-          <button className="btn btn-success" onClick={save} disabled={loadingVol || saving}>
+          <button className="btn btn-success" onClick={save} disabled={!canSave}>
             {saving ? "Enregistrement…" : "Enregistrer et continuer ➔"}
           </button>
         </div>
@@ -352,11 +462,13 @@ const save = async () => {
           </div>
 
           {loadingVol && <div className="text-muted small mt-2">Chargement des infos vol…</div>}
-          {!ficheIds.length && (
-            <div className="text-muted small mt-2">
-              ⚠️ Les fiches ne sont pas encore créées : elles seront créées au moment de “Enregistrer”.
+
+          {!allHotelsChanged && hotelRows.length > 1 && (
+            <div className="text-danger small mt-3">
+              ⚠️ Pour continuer : l’heure de chaque hôtel doit être <b>différente</b> de l’heure initiale (au moins 1 minute).
             </div>
           )}
+
         </div>
       </div>
 
@@ -379,6 +491,10 @@ const save = async () => {
               const diffDays = dayDiffFromBase(end);
               const badge = diffDays !== 0 ? `${diffDays > 0 ? "+" : ""}${diffDays}j` : null;
 
+              const baseKey = (baselineByHotel?.[r.hotel] || "").trim();
+              const curKey = end ? toMinuteKey(end) : "";
+              const isChanged = baseKey && curKey && baseKey !== curKey;
+
               return (
                 <tr key={r.hotel}>
                   <td>{r.hotel}</td>
@@ -392,7 +508,12 @@ const save = async () => {
                         onChange={(e) => handleEndChange(r.hotel, e.target.value)}
                       />
                       {badge && <span className="text-danger fw-bold small">{badge}</span>}
+                     {hotelRows.length > 1 && !isChanged && (
+                      <span className="badge bg-warning text-dark">À modifier</span>
+                    )}
+
                     </div>
+                    
                   </td>
                 </tr>
               );
@@ -408,10 +529,18 @@ const save = async () => {
         </table>
       </div>
 
-      <div className="text-muted small mt-3">
-        Astuce : tu peux modifier l’heure par hôtel. Le badge{" "}
-        <span className="fw-bold text-danger">+1j</span> /{" "}
-        <span className="fw-bold text-danger">-1j</span> indique que l’horaire dépasse le jour de la fiche.
+      {/* Remarque (after hotel list) */}
+      <div className="card mt-3">
+        <div className="card-body">
+          <div className="fw-bold mb-2">Remarque</div>
+          <textarea
+            className="form-control"
+            rows={3}
+            placeholder="Ajouter une remarque…"
+            value={remarque}
+            onChange={(e) => setRemarque(e.target.value)}
+          />
+        </div>
       </div>
     </div>
   );

@@ -12,7 +12,7 @@ from rest_framework.exceptions import PermissionDenied
 
 from b2b.models import Vehicule, Chauffeur, MissionRessource, Zone
 from b2b.serializers import VehiculeSerializer, ChauffeurSerializer
-from b2b.views.helpers import _user_role, _user_agence, _ensure_same_agence_or_superadmin
+from b2b.views.helpers import _user_role, _user_agence
 
 
 # =========================
@@ -92,6 +92,18 @@ class VehiculeViewSet(viewsets.ModelViewSet):
             last_mission_address=Subquery(last_mr.values("lieu_arrivee")[:1], output_field=CharField()),
         )
 
+        # ✅ annotations prochaine mission (début + adresse départ) (basé sur "now")
+        now = timezone.now()
+        next_mr = (
+            MissionRessource.objects
+            .filter(is_deleted=False, vehicule_id=OuterRef("pk"), date_heure_debut__gte=now)
+            .order_by("date_heure_debut", "id")
+        )
+        qs = qs.annotate(
+            next_mission_start=Subquery(next_mr.values("date_heure_debut")[:1], output_field=DateTimeField()),
+            next_mission_address=Subquery(next_mr.values("lieu_depart")[:1], output_field=CharField()),
+        )
+
         # filtre disponibilité sur créneau
         debut = _parse_dt(self.request.query_params.get("debut"))
         fin = _parse_dt(self.request.query_params.get("fin"))
@@ -142,17 +154,43 @@ class VehiculeViewSet(viewsets.ModelViewSet):
                 .first()
             )
             last_driver = last_aff.chauffeur if last_aff else None
+            last_driver_obj = (
+                {"id": last_driver.id, "nom": last_driver.nom, "prenom": last_driver.prenom}
+                if last_driver else None
+            )
+            last_driver_name = (
+                f"{(last_driver.prenom or '').strip()} {(last_driver.nom or '').strip()}".strip()
+                if last_driver else None
+            )
 
             row = self.get_serializer(v).data
+
+            # ✅ expose les annotations (sinon elles restent invisibles)
+            row["last_mission_end"] = getattr(v, "last_mission_end", None)
+            row["last_mission_address"] = (getattr(v, "last_mission_address", None) or None)
+            row["next_mission_start"] = getattr(v, "next_mission_start", None)
+            row["next_mission_address"] = (getattr(v, "next_mission_address", None) or None)
+
+            # ✅ état réel
             row["real_state"] = {
                 "location": location,
                 "available_from": available_from,
                 "available_until": available_until,
             }
-            row["dernier_chauffeur"] = (
-                {"id": last_driver.id, "nom": last_driver.nom, "prenom": last_driver.prenom}
-                if last_driver else None
-            )
+
+            # ✅ aliases "adresse actuelle" (ton front lit adresse_actuelle / position_actuelle / current_address)
+            row["adresse_actuelle"] = location
+            row["position_actuelle"] = location
+            row["current_address"] = location
+
+            # ✅ dernier chauffeur : alias pour matcher ton front (getLastDriverLabel)
+            row["dernier_chauffeur"] = last_driver_obj  # garde ton champ existant
+            row["last_driver"] = last_driver_obj
+            row["last_driver_obj"] = last_driver_obj
+            row["last_chauffeur"] = last_driver_obj
+            row["last_chauffeur_obj"] = last_driver_obj
+            row["last_driver_name"] = last_driver_name
+            row["last_chauffeur_name"] = last_driver_name
 
             # tri zone optionnel
             if zone:

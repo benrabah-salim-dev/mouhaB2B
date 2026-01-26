@@ -7,17 +7,11 @@ from decouple import config, Csv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # ====== Sécurité / Environnement ======
-SECRET_KEY = 'django-insecure-_)$+#)m-deh&1z8-go@+4k5iy_36--cfys@n6@_eei$rv0chd3'
+# IMPORTANT: SECRET_KEY jamais en dur
+SECRET_KEY = config("DJANGO_SECRET_KEY", default="CHANGE_ME_IN_ENV")
+
 DEBUG = config("DEBUG", default=True, cast=bool)
 ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
-
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-        "LOCATION": "smeks-otp",
-    }
-}
-
 
 # ====== Apps ======
 INSTALLED_APPS = [
@@ -27,19 +21,22 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+
     "corsheaders",
     "rest_framework",
     "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",  # ✅ pour logout/blacklist refresh
     "django_filters",
-        "django_extensions",
-            "b2b.apps.B2BConfig",
+    "django_extensions",
+
+    "b2b.apps.B2BConfig",
 ]
 
 # ====== Middleware ======
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    "corsheaders.middleware.CorsMiddleware",  
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -50,16 +47,16 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = "b2bMouha.urls"
 
-# ====== Templates (React build en prod si tu sers via Django) ======
+# ====== Templates ======
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [os.path.join(BASE_DIR, "frontend", "build")],
+        "DIRS": [],  # si tu as des templates custom, mets-les ici
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
                 "django.template.context_processors.debug",
-                "django.template.context_processors.request",
+                "django.template.context_processors.request",  # ✅ requis pour l'admin
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
             ],
@@ -67,9 +64,8 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "b2bMouha.wsgi.application"
 
-# ====== Base de données (ajuste si tu utilises MySQL en local) ======
+# ====== DB ======
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
@@ -85,38 +81,14 @@ DATABASES = {
     }
 }
 
-# ====== Password validators ======
-AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
-    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
-    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
-]
-
-# ====== Internationalisation ======
-LANGUAGE_CODE = "en-us"
-TIME_ZONE = "Africa/Tunis"
-USE_TZ = True
-USE_I18N = True
-
-# ====== Static (React + Django) ======
-STATIC_URL = "/static/"
-from pathlib import Path as _Path
-STATICFILES_DIRS = []
-_FRONT_BUILD_STATIC = _Path(BASE_DIR) / "frontend" / "build" / "static"
-if _FRONT_BUILD_STATIC.exists():
-    STATICFILES_DIRS = [str(_FRONT_BUILD_STATIC)]
-STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
-
-
-# ====== CORS (dev) ======
+# ====== CORS ======
 CORS_ALLOW_ALL_ORIGINS = config("CORS_ALLOW_ALL_ORIGINS", default=True, cast=bool)
 CORS_ALLOWED_ORIGINS = config(
     "CORS_ALLOWED_ORIGINS",
     default="http://localhost:3000,http://127.0.0.1:3000",
     cast=Csv(),
 )
-CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_CREDENTIALS = True  # ✅ nécessaire si cookies refresh
 
 # ====== DRF / Auth ======
 REST_FRAMEWORK = {
@@ -129,33 +101,74 @@ REST_FRAMEWORK = {
     "DEFAULT_FILTER_BACKENDS": (
         "django_filters.rest_framework.DjangoFilterBackend",
     ),
+    # ✅ Anti brute-force (pro)
+    "DEFAULT_THROTTLE_CLASSES": (
+        "rest_framework.throttling.ScopedRateThrottle",
+    ),
+    "DEFAULT_THROTTLE_RATES": {
+        "auth_login": "5/min",     # login : 5 par minute
+        "auth_refresh": "10/min",  # refresh : 10 par minute
+    },
 }
 
+# ====== JWT (pro) ======
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=4),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    # ✅ Access court (réduit impact si volé)
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=10),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=14),
+
+    # ✅ Rotation + blacklist = vrai logout + plus safe
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+
     "AUTH_HEADER_TYPES": ("Bearer",),
+    "UPDATE_LAST_LOGIN": True,
 }
 
+# ====== Cookies Auth (Refresh en HttpOnly) ======
+AUTH_COOKIE_REFRESH_NAME = config("AUTH_COOKIE_REFRESH_NAME", default="refresh_token")
+AUTH_COOKIE_SECURE = config("AUTH_COOKIE_SECURE", default=not DEBUG, cast=bool)  # True en prod (HTTPS)
+AUTH_COOKIE_HTTPONLY = True
+AUTH_COOKIE_SAMESITE = config("AUTH_COOKIE_SAMESITE", default="Lax")  # "Lax" ou "Strict"
+AUTH_COOKIE_DOMAIN = config("AUTH_COOKIE_DOMAIN", default=None)
+AUTH_COOKIE_PATH = "/api/auth/"
+
+# ====== Sécurité HTTPS (à activer en prod) ======
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Pour imports massifs
 DATA_UPLOAD_MAX_NUMBER_FIELDS = int(config("DATA_UPLOAD_MAX_NUMBER_FIELDS", default=10000))
 
-
-# En DEV : juste afficher le mail dans la console
+# ====== EMAIL (ne jamais mettre le mdp en dur) ======
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = "smtp.gmail.com"
-EMAIL_PORT = 587
-EMAIL_USE_TLS = True
-
-EMAIL_HOST_USER = "benrabah.salim.dev@gmail.Com"
-EMAIL_HOST_PASSWORD = "bqbd waxq mchj xkcg"
-
-DEFAULT_FROM_EMAIL = "SMEK'S"
-
+EMAIL_HOST = config("EMAIL_HOST", default="smtp.gmail.com")
+EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
+EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
+EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="SMEK'S")
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
-GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "AIzaSyB9oNOHHMOeYYUFXERyHkGlF2Y3_wFZESA")
+
+# ====== Clés externes ======
+GOOGLE_MAPS_API_KEY = config("GOOGLE_MAPS_API_KEY", default="")
+
+
+# ====== Static files ======
+STATIC_URL = "/static/"
+
+# En dev : optionnel, mais recommandé
+STATICFILES_DIRS = [
+    BASE_DIR / "static",
+]
+
+# En prod (collectstatic)
+STATIC_ROOT = BASE_DIR / "staticfiles_build"

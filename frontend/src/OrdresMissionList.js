@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useContext } from "react";
 import api from "./api";
 import Sidebar from "./Sidebar"; // ✅ Import du Sidebar
-import { AuthContext } from "./context/AuthContext"; // ✅ Import du contexte Auth
+import { AuthContext } from "./context/(old)AuthContext"; // ✅ Import du contexte Auth
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleString() : "");
 

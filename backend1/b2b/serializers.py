@@ -282,6 +282,7 @@ class FicheMouvementSerializer(serializers.ModelSerializer):
             "enfants",
             "bebe",
             "hotel_schedule",
+            "remarque",
             "created_by",
             "created_at",
         ]
@@ -376,6 +377,7 @@ class MissionSerializer(serializers.ModelSerializer):
             "date_heure_debut",
             "date_heure_fin",
             "passage",
+            "remarque",
         ]
 
     def _main_ressource(self, obj: Mission) -> Optional[MissionRessource]:

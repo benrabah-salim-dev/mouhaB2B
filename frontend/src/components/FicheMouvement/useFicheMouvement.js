@@ -2,7 +2,7 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import api from "../../api";
-import { AuthContext } from "../../context/AuthContext";
+import { AuthContext } from "../../context/(old)AuthContext";
 
 /** ========= Helpers: nombres ========= **/
 function parseIntLoose(v) {

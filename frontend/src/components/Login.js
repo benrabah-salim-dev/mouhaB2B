@@ -1,7 +1,7 @@
 // src/pages/LoginPage.jsx
 import React, { useState, useContext, useEffect, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { AuthContext } from "../context/AuthContext";
+import { AuthContext } from "../auth/AuthContext";
 import logoUrl from "../assets/SMEKSLogoLogin.png";
 
 export default function LoginPage() {
