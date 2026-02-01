@@ -1,7 +1,7 @@
 // src/components/FicheMouvementCreate.jsx
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import api from "../../api";
+import api from "../../api/client";
 import { FaPlus, FaTrash, FaPlaneArrival, FaPlaneDeparture, FaHotel, FaUsers, FaInfoCircle } from "react-icons/fa";
 
 // Utilitaire Date

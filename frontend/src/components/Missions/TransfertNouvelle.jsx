@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { createPortal } from "react-dom";
-import api from "../../api";
+import api from "../../api/client";
 
 /* ================= Helpers ================= */
 

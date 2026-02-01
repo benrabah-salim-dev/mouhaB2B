@@ -10,8 +10,7 @@ import {
   FaUser,
   FaSearch,
 } from "react-icons/fa";
-import api from "../../api";
-
+import api from "../../api/client";
 /* =========================
    Utils
 ========================= */

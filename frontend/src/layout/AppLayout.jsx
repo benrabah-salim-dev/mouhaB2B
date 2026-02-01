@@ -1,6 +1,6 @@
 // src/layouts/AppLayout.jsx
 import React, { useEffect, useMemo } from "react";
-import Sidebar from "../Sidebar";
+import Sidebar from "./Sidebar";
 import TopBar from "../components/TopBar";
 
 export default function AppLayout({

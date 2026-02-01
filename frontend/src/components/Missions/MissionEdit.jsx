@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { FaArrowLeft, FaBan, FaDownload, FaSave, FaSyncAlt } from "react-icons/fa";
-import api from "../../api";
+import api from "../../api/client";
 
 /* ---------------- Utils ---------------- */
 function downloadBlobPdf(blob, filename) {

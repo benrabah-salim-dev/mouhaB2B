@@ -15,7 +15,7 @@ import {
   FaArchive,
   FaExchangeAlt,
 } from "react-icons/fa";
-import api from "../../api";
+import api from "../../api/client";
 
 // --- PDF ---
 async function handleDownloadPdf(missionId, numeroVol, dateMission) {

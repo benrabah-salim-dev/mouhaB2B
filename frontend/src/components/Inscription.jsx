@@ -1,6 +1,6 @@
 // src/components/InscriptionAgenceWizard.jsx
 import React, { useMemo, useState, useEffect, useRef } from "react";
-import api from "../api";
+import api from "../api/client";
 import {
   Building2,
   UserCheck,
@@ -64,12 +64,14 @@ const steps = [
   { key: "verify", title: "Vérification", icon: <ShieldCheck size={18} /> },
 ];
 
-const ALLOWED_EMAIL_DOMAINS = ["gmail.com", "outlook.com", "yahoo.com"];
-const isAllowedEmail = (email) => {
-  const m = String(email || "").toLowerCase().match(/^[^@]+@([^@]+)$/);
-  if (!m) return false;
-  return ALLOWED_EMAIL_DOMAINS.includes(m[1]);
+// ✅ Validation email (B2B-friendly : aucun blocage de domaine)
+const isValidEmail = (email) => {
+  const v = String(email || "").trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 };
+
+// ✅ Plus de whitelist : on accepte tous les domaines valides
+const isAllowedEmail = (email) => isValidEmail(email);
 
 const ALLOWED_DOC_MIMES = ["application/pdf", "image/png", "image/jpeg"];
 
@@ -102,7 +104,12 @@ function FilePicker({ label, hint, accept, value, onChange, error }) {
     <div>
       <label className="form-label fw-semibold">{label}</label>
       {hint ? <div className="text-muted small mb-1">{hint}</div> : null}
-      <div className={`border rounded-3 p-2 d-flex align-items-center gap-2 ${error ? "border-danger" : ""}`} style={{ background: "#fafafa" }}>
+      <div
+        className={`border rounded-3 p-2 d-flex align-items-center gap-2 ${
+          error ? "border-danger" : ""
+        }`}
+        style={{ background: "#fafafa" }}
+      >
         <Upload size={16} className="text-muted" />
         <div className="small text-truncate flex-grow-1">
           {value?.name ? value.name : <span className="text-muted">Aucun fichier sélectionné</span>}
@@ -125,7 +132,9 @@ function ProgressStepper({ stepIndex }) {
       <div className="d-flex justify-content-between align-items-center mb-2">
         <div>
           <div className="text-muted small">Inscription agence</div>
-          <div className="fw-bold">Étape {stepIndex + 1} / {steps.length} — {steps[stepIndex].title}</div>
+          <div className="fw-bold">
+            Étape {stepIndex + 1} / {steps.length} — {steps[stepIndex].title}
+          </div>
         </div>
         <div className="text-muted small">SMEKS</div>
       </div>
@@ -234,8 +243,7 @@ export default function InscriptionAgenceWizard({ onSubmitted }) {
       if (!data.code_postal?.trim()) e.code_postal = "Code postal requis";
 
       if (!data.company_email?.trim()) e.company_email = "Valeur requise";
-      else if (!isAllowedEmail(data.company_email))
-        e.company_email = `Domaines autorisés : ${ALLOWED_EMAIL_DOMAINS.join(", ")}`;
+      else if (!isAllowedEmail(data.company_email)) e.company_email = "Email invalide";
 
       if (!data.company_phone?.trim()) e.company_phone = "Valeur requise";
     }
@@ -251,8 +259,7 @@ export default function InscriptionAgenceWizard({ onSubmitted }) {
       }
 
       if (!data.rep_email?.trim()) e.rep_email = "Valeur requise";
-      else if (!isAllowedEmail(data.rep_email))
-        e.rep_email = `Domaines autorisés : ${ALLOWED_EMAIL_DOMAINS.join(", ")}`;
+      else if (!isAllowedEmail(data.rep_email)) e.rep_email = "Email invalide";
 
       if (!data.rep_phone?.trim()) e.rep_phone = "Valeur requise";
       if (!data.otp_delivery?.trim()) e.otp_delivery = "Choisissez un mode";
@@ -281,13 +288,14 @@ export default function InscriptionAgenceWizard({ onSubmitted }) {
     setErrors({});
 
     try {
-      await api.post("/public/demandes-inscription/send-otp/", {
-        rep_email: data.rep_email,
-        company_email: data.company_email,
-        rep_prenom: data.rep_prenom,
-        rep_nom: data.rep_nom,
-        legal_name: data.legal_name,
-      });
+      await api.post("public/demandes-inscription/send-otp/", {
+      rep_email: data.rep_email,
+      company_email: data.company_email,
+      rep_prenom: data.rep_prenom,
+      rep_nom: data.rep_nom,
+      legal_name: data.legal_name,
+    });
+
 
       setStepIndex(3);
     } catch (err) {
@@ -338,9 +346,10 @@ export default function InscriptionAgenceWizard({ onSubmitted }) {
 
       form.append("otp_code", data.otp_code);
 
-      await api.post("/public/demandes-inscription/", form, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      await api.post("public/demandes-inscription/", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+
 
       if (onSubmitted) onSubmitted();
       window.location.href = "/login?success=true";
@@ -385,9 +394,7 @@ export default function InscriptionAgenceWizard({ onSubmitted }) {
 
       <div className="card border-0 shadow-sm" style={{ borderRadius: 16 }}>
         <div className="card-body p-4 p-md-5">
-          {errors._global ? (
-            <div className="alert alert-danger mb-4">{errors._global}</div>
-          ) : null}
+          {errors._global ? <div className="alert alert-danger mb-4">{errors._global}</div> : null}
 
           {current.key === "contact" && (
             <>
@@ -415,16 +422,10 @@ export default function InscriptionAgenceWizard({ onSubmitted }) {
               <div className="alert alert-info">
                 <strong>Sécurité</strong> — Un code OTP sera envoyé pour valider l’inscription.
               </div>
-              <SectionTitle
-                title="Représentant légal"
-                subtitle="Informations d’identité et documents éventuels."
-              />
+              <SectionTitle title="Représentant légal" subtitle="Informations d’identité et documents éventuels." />
               <StepRepresentant data={data} errors={errors} onChange={handleChange} />
               <hr className="my-4" />
-              <SectionTitle
-                title="Contact du représentant"
-                subtitle="Cet email recevra le code OTP."
-              />
+              <SectionTitle title="Contact du représentant" subtitle="Cet email recevra le code OTP." />
               <StepRepresentantContact data={data} errors={errors} onChange={handleChange} />
             </>
           )}
@@ -496,7 +497,7 @@ function StepEntreprise({ data, errors, onChange }) {
           className={`form-control ${errors.legal_name ? "is-invalid" : ""}`}
           value={data.legal_name}
           onChange={onChange("legal_name")}
-          placeholder="Ex : Agence Soleil Travel"
+          placeholder="Nom de l'agence"
         />
         <FieldError error={errors.legal_name} />
       </div>
@@ -508,7 +509,7 @@ function StepEntreprise({ data, errors, onChange }) {
           className={`form-control ${errors.rne ? "is-invalid" : ""}`}
           value={data.rne}
           onChange={onChange("rne")}
-          placeholder="Ex : 1234567A"
+          placeholder=""
         />
         <FieldError error={errors.rne} />
       </div>
@@ -520,7 +521,7 @@ function StepEntreprise({ data, errors, onChange }) {
           className={`form-control ${errors.code_fiscal ? "is-invalid" : ""}`}
           value={data.code_fiscal}
           onChange={onChange("code_fiscal")}
-          placeholder="Ex : 001/ABC/000"
+          placeholder=""
         />
         <FieldError error={errors.code_fiscal} />
       </div>
@@ -532,7 +533,7 @@ function StepEntreprise({ data, errors, onChange }) {
           className={`form-control ${errors.code_categorie ? "is-invalid" : ""}`}
           value={data.code_categorie}
           onChange={onChange("code_categorie")}
-          placeholder="Ex : CAT01"
+          placeholder=""
         />
         <FieldError error={errors.code_categorie} />
       </div>
@@ -544,7 +545,7 @@ function StepEntreprise({ data, errors, onChange }) {
           className={`form-control ${errors.etab_secondaire ? "is-invalid" : ""}`}
           value={data.etab_secondaire}
           onChange={onChange("etab_secondaire")}
-          placeholder="Ex : 0001"
+          placeholder=""
         />
         <FieldError error={errors.etab_secondaire} />
       </div>
@@ -552,7 +553,7 @@ function StepEntreprise({ data, errors, onChange }) {
       <div className="col-12">
         <FilePicker
           label="Logo (PNG/JPEG)"
-          hint="Optionnel, mais recommandé pour la validation."
+          required
           accept=".png,.jpg,.jpeg,image/png,image/jpeg"
           value={data.logo_file}
           onChange={onChange("logo_file")}
@@ -563,7 +564,7 @@ function StepEntreprise({ data, errors, onChange }) {
       <div className="col-md-6">
         <FilePicker
           label="Document RNE (PDF/PNG/JPEG)"
-          hint="Optionnel"
+          required
           accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
           value={data.rne_doc_file}
           onChange={onChange("rne_doc_file")}
@@ -574,7 +575,7 @@ function StepEntreprise({ data, errors, onChange }) {
       <div className="col-md-6">
         <FilePicker
           label="Patente / Registre (PDF/PNG/JPEG)"
-          hint="Optionnel"
+          required
           accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
           value={data.patente_doc_file}
           onChange={onChange("patente_doc_file")}
@@ -595,7 +596,7 @@ function StepEntrepriseContact({ data, errors, onChange, onAddressSelected }) {
           className={`form-control ${errors.company_country ? "is-invalid" : ""}`}
           value={data.company_country}
           onChange={onChange("company_country")}
-          placeholder="Ex : Tunisie"
+          placeholder=""
         />
         <FieldError error={errors.company_country} />
       </div>
@@ -612,13 +613,14 @@ function StepEntrepriseContact({ data, errors, onChange, onAddressSelected }) {
       <div className="col-md-6">
         <label className="form-label fw-semibold">Ville</label>
         <div className="input-group">
-          <span className="input-group-text"><MapPin size={16} /></span>
+          <span className="input-group-text">
+            <MapPin size={16} />
+          </span>
           <input
             type="text"
             className={`form-control ${errors.ville ? "is-invalid" : ""}`}
             value={data.ville}
             onChange={onChange("ville")}
-            placeholder="Ex : Tunis"
           />
         </div>
         <FieldError error={errors.ville} />
@@ -631,7 +633,6 @@ function StepEntrepriseContact({ data, errors, onChange, onAddressSelected }) {
           className={`form-control ${errors.code_postal ? "is-invalid" : ""}`}
           value={data.code_postal}
           onChange={onChange("code_postal")}
-          placeholder="Ex : 1000"
         />
         <FieldError error={errors.code_postal} />
       </div>
@@ -639,17 +640,16 @@ function StepEntrepriseContact({ data, errors, onChange, onAddressSelected }) {
       <div className="col-md-6">
         <label className="form-label fw-semibold">Email entreprise</label>
         <div className="input-group">
-          <span className="input-group-text"><Mail size={16} /></span>
+          <span className="input-group-text">
+            <Mail size={16} />
+          </span>
           <input
             type="email"
             className={`form-control ${errors.company_email ? "is-invalid" : ""}`}
             value={data.company_email}
             onChange={onChange("company_email")}
-            placeholder="exemple@gmail.com"
+            placeholder="contact@entreprise.com"
           />
-        </div>
-        <div className="text-muted small mt-1">
-          Domaines autorisés : {ALLOWED_EMAIL_DOMAINS.join(", ")}
         </div>
         <FieldError error={errors.company_email} />
       </div>
@@ -657,7 +657,9 @@ function StepEntrepriseContact({ data, errors, onChange, onAddressSelected }) {
       <div className="col-md-6">
         <label className="form-label fw-semibold">Téléphone entreprise</label>
         <div className="input-group">
-          <span className="input-group-text"><Phone size={16} /></span>
+          <span className="input-group-text">
+            <Phone size={16} />
+          </span>
           <input
             type="tel"
             className={`form-control ${errors.company_phone ? "is-invalid" : ""}`}
@@ -717,7 +719,6 @@ function StepRepresentant({ data, errors, onChange }) {
           className={`form-control ${errors.rep_prenom ? "is-invalid" : ""}`}
           value={data.rep_prenom}
           onChange={onChange("rep_prenom")}
-          placeholder="Ex : Ahmed"
         />
         <FieldError error={errors.rep_prenom} />
       </div>
@@ -729,7 +730,6 @@ function StepRepresentant({ data, errors, onChange }) {
           className={`form-control ${errors.rep_nom ? "is-invalid" : ""}`}
           value={data.rep_nom}
           onChange={onChange("rep_nom")}
-          placeholder="Ex : Ben Ali"
         />
         <FieldError error={errors.rep_nom} />
       </div>
@@ -741,7 +741,6 @@ function StepRepresentant({ data, errors, onChange }) {
           className={`form-control ${errors.rep_cin ? "is-invalid" : ""}`}
           value={data.rep_cin}
           onChange={onChange("rep_cin")}
-          placeholder="Ex : 01234567"
         />
         <FieldError error={errors.rep_cin} />
       </div>
@@ -766,17 +765,15 @@ function StepRepresentantContact({ data, errors, onChange }) {
       <div className="col-md-6">
         <label className="form-label fw-semibold">Email (réception OTP)</label>
         <div className="input-group">
-          <span className="input-group-text"><Mail size={16} /></span>
+          <span className="input-group-text">
+            <Mail size={16} />
+          </span>
           <input
             type="email"
             className={`form-control ${errors.rep_email ? "is-invalid" : ""}`}
             value={data.rep_email}
             onChange={onChange("rep_email")}
-            placeholder="votre.nom@gmail.com"
           />
-        </div>
-        <div className="text-muted small mt-1">
-          Domaines autorisés : {ALLOWED_EMAIL_DOMAINS.join(", ")}
         </div>
         <FieldError error={errors.rep_email} />
       </div>
@@ -784,13 +781,14 @@ function StepRepresentantContact({ data, errors, onChange }) {
       <div className="col-md-6">
         <label className="form-label fw-semibold">Téléphone</label>
         <div className="input-group">
-          <span className="input-group-text"><Phone size={16} /></span>
+          <span className="input-group-text">
+            <Phone size={16} />
+          </span>
           <input
             type="tel"
             className={`form-control ${errors.rep_phone ? "is-invalid" : ""}`}
             value={data.rep_phone}
             onChange={onChange("rep_phone")}
-            placeholder="Ex : +216 21 000 000"
           />
         </div>
         <FieldError error={errors.rep_phone} />
@@ -809,7 +807,9 @@ function StepRepresentantContact({ data, errors, onChange }) {
               checked={data.otp_delivery === "email"}
               onChange={onChange("otp_delivery")}
             />
-            <label className="form-check-label" htmlFor="otp_email">E-mail</label>
+            <label className="form-check-label" htmlFor="otp_email">
+              E-mail
+            </label>
           </div>
 
           <div className="form-check">
@@ -823,7 +823,9 @@ function StepRepresentantContact({ data, errors, onChange }) {
               onChange={onChange("otp_delivery")}
               disabled
             />
-            <label className="form-check-label text-muted" htmlFor="otp_sms">SMS (bientôt)</label>
+            <label className="form-check-label text-muted" htmlFor="otp_sms">
+              SMS (bientôt)
+            </label>
           </div>
         </div>
         <FieldError error={errors.otp_delivery} />
@@ -856,7 +858,10 @@ function StepReview({ rows }) {
 function StepVerify({ data, errors, onChange }) {
   return (
     <div className="text-center">
-      <div className="mx-auto mb-3 d-inline-flex align-items-center justify-content-center rounded-circle bg-light" style={{ width: 64, height: 64 }}>
+      <div
+        className="mx-auto mb-3 d-inline-flex align-items-center justify-content-center rounded-circle bg-light"
+        style={{ width: 64, height: 64 }}
+      >
         <ShieldCheck size={28} className="text-primary" />
       </div>
 

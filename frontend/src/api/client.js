@@ -10,6 +10,7 @@ function buildApiBase() {
 }
 
 export const API_BASE = buildApiBase();
+console.log("API_BASE =", API_BASE); 
 const LOGIN_ROUTE = process.env.REACT_APP_LOGIN_ROUTE || "/login";
 
 const storageKey = "access";
@@ -28,6 +29,15 @@ const api = axios.create({
   timeout: 180000,
   withCredentials: true, // cookie refresh_token
 });
+
+
+api.interceptors.request.use((config) => {
+  if (typeof config.url === "string" && config.url.startsWith("/")) {
+    config.url = config.url.slice(1);
+  }
+  return config;
+});
+
 
 api.interceptors.request.use((config) => {
   const access = getAccess();

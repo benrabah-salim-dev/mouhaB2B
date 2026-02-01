@@ -1,7 +1,7 @@
 // src/components/FicheComponentOrdre/FicheMouvementRecap.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
-import api from "../../api";
+import api from "../../api/client";
 
 /* ===== Utils Date ===== */
 function pad(n) {

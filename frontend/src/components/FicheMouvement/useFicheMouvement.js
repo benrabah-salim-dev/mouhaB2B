@@ -1,9 +1,8 @@
 // src/components/FicheMouvement/useFicheMouvement.js
 import { useContext, useEffect, useRef, useState } from "react";
 import * as XLSX from "xlsx";
-import api from "../../api";
-import { AuthContext } from "../../context/(old)AuthContext";
-
+import api from "../../api/client";
+import { AuthContext } from "../../auth/AuthContext";
 /** ========= Helpers: nombres ========= **/
 function parseIntLoose(v) {
   if (v === null || v === undefined) return 0;

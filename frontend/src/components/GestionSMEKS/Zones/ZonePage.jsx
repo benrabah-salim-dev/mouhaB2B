@@ -1,6 +1,6 @@
 // src/components/GestionSMEKS/Zones/ZonePage.jsx
 import React, { useEffect, useRef, useState } from "react";
-import api from "../../../api";
+import api from "../../../api/client";
 
 export default function ZonesPage() {
   const mapRef = useRef(null); // div DOM

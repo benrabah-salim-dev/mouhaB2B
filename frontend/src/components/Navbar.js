@@ -1,6 +1,6 @@
 // src/components/Navbar.js
 import React, { useContext } from 'react';
-import { AuthContext } from '../context/(old)AuthContext';
+import { AuthContext } from '../auth/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
 import smeksLogo from '../assets/smeksLogo.jpg';
 

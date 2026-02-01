@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import FullCalendar from "@fullcalendar/react";
 import resourceTimelinePlugin from "@fullcalendar/resource-timeline";
 import interactionPlugin from "@fullcalendar/interaction";
-import api from "../../api";
+import api from "../../api/client";
 
 function toISODate(d) {
   const x = new Date(d);

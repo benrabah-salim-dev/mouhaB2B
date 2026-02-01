@@ -1,7 +1,7 @@
 // src/components/FicheMouvementList/FichesMouvementList.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useLocation, useParams } from "react-router-dom";
-import api from "../../api";
+import api from "../../api/client";
 import "./fichesList.css";
 
 /* ================= Helpers ================= */

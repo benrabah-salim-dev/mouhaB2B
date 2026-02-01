@@ -1,6 +1,6 @@
 // src/components/Fournisseur/FournisseurTarifs.jsx
 import React, { useEffect, useState } from "react";
-import api from "../../api";
+import api from "../../api/client";
 
 function currencySymbol(code) {
   if (!code) return "د.ت";
