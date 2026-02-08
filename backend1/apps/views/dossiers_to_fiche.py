@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from datetime import date as _date
 from collections import defaultdict
 
 from django.db import transaction
@@ -44,6 +43,7 @@ def _parse_date(s):
 def _clean_ref(s):
     return (s or "").strip()
 
+
 class DossiersToFicheAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -64,9 +64,6 @@ class DossiersToFicheAPIView(APIView):
 
         # ✅ SOURCE DE VÉRITÉ : disponible si pas lié à une fiche
         qs = qs.filter(fiche_mouvement__isnull=True)
-
-        # (Optionnel) tu peux garder, mais ça ne doit pas être la condition principale
-        # qs = qs.filter(is_transformed=False)
 
         if kind == "depart":
             qs = qs.filter(type_mouvement__in=DEPART_TYPES)
@@ -113,6 +110,8 @@ class DossiersToFicheAPIView(APIView):
                     "horaires": d.horaires.isoformat() if d.horaires else None,
                     "client_to": d.client,
                     "reference": getattr(d, "reference", None),
+
+                    # on garde pour l'affichage côté sélection dossiers
                     "observation": getattr(d, "observation", None),
                 }
             )
@@ -129,6 +128,9 @@ class DossiersToFicheAPIView(APIView):
         date_str = payload.get("date")
         numero_vol = (payload.get("numero_vol") or "").strip() or None
         aeroport = (payload.get("aeroport") or "").strip() or None
+
+        # ✅ IMPORTANT : remarque vient du front, on l'enregistre UNIQUEMENT si non vide
+        remarque_val = (payload.get("remarque") or "").strip() or None
 
         if not agence_id or not dossier_ids:
             return Response(
@@ -213,14 +215,6 @@ class DossiersToFicheAPIView(APIView):
 
         ref = f"{base_ref}-{timezone.now().strftime('%Y%m%d%H%M%S%f')}"[:50]
 
-        observations = []
-        for d in dossiers:
-            if d.observation:
-                obs = d.observation.strip()
-                if obs and obs not in observations:
-                    observations.append(obs)
-        observation_val = " | ".join(observations) if observations else None
-
         fiche = FicheMouvement.objects.create(
             ref=ref,
             agence=agence,
@@ -237,7 +231,13 @@ class DossiersToFicheAPIView(APIView):
             bebe=bebe_total,
             hotel=hotel_obj,
             hotel_schedule=hotel_schedule,
-            observation=observation_val,
+
+            # ✅ ce champ-là doit être alimenté MANUELLEMENT par le front
+            remarque=remarque_val,
+
+            # ❌ on ne remplit PLUS observation automatiquement
+            # observation=... (supprimé)
+
             created_by=request.user,
         )
 

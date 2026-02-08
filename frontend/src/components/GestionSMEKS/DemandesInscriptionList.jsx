@@ -1,4 +1,3 @@
-// src/components/GestionSMEKS/DemandesInscriptionList.jsx
 import React, { useEffect, useState } from "react";
 import api from "../../api/client";
 
@@ -30,8 +29,8 @@ export default function DemandesInscriptionList() {
     fetchDemandes();
   }, []);
 
-  const handleDecision = async (demandeNumero, decision) => {
-    if (!demandeNumero) {
+  const handleDecision = async (demandeId, decision) => {
+    if (!demandeId) {
       alert("Impossible de traiter : identifiant de la demande manquant.");
       return;
     }
@@ -41,7 +40,7 @@ export default function DemandesInscriptionList() {
     if (!ok) return;
 
     try {
-      await api.post(`/agences/demandes-inscription/${demandeNumero}/decide/`, {
+      await api.post(`/agences/demandes-inscription/${demandeId}/decide/`, {
         decision,
       });
       await fetchDemandes();
@@ -89,17 +88,16 @@ export default function DemandesInscriptionList() {
               <th>Email</th>
               <th style={{ width: "220px" }}>Date de la demande</th>
               <th style={{ width: "160px" }}>Statut</th>
-              {/* 🚀 Nouvelle colonne Documents */}
               <th style={{ width: "220px" }}>Documents</th>
               <th style={{ width: "220px" }} className="text-end">
                 Actions
               </th>
             </tr>
           </thead>
+
           <tbody>
             {loading && (
               <tr>
-                {/* +1 colonne ⇒ colSpan = 8 */}
                 <td colSpan={8} className="text-center py-4">
                   Chargement des demandes…
                 </td>
@@ -115,78 +113,102 @@ export default function DemandesInscriptionList() {
             )}
 
             {!loading &&
-              demandes.map((demande) => (
-                <tr key={demande.demande_numero}>
-                  <td>
-                    <code>#{demande.demande_numero}</code>
-                  </td>
-                  <td>{demande.legal_name || "—"}</td>
-                  <td>
-                    {demande.rep_prenom} {demande.rep_nom}
-                  </td>
-                  <td>{demande.company_email || demande.rep_email || "—"}</td>
-                  <td>{formatDate(demande.created_at)}</td>
-                  <td>
-                    <span
-                      className={
-                        "badge rounded-pill " +
-                        (demande.statut === "refusee"
-                          ? "bg-danger-subtle text-danger"
-                          : "bg-warning-subtle text-warning-emphasis")
-                      }
-                    >
-                      {demande.statut || "en_attente"}
-                    </span>
-                  </td>
+              demandes.map((demande) => {
+                // ✅ ID robuste (backend-safe)
+                const demandeId =
+                  demande.demande_numero ??
+                  demande.id ??
+                  demande.pk ??
+                  null;
 
-                  {/* ✅ Colonne Documents : RNE / Patente */}
-                  <td>
-                    {(!demande.rne_doc_file && !demande.patente_doc_file) ? (
-                      <span className="text-muted small">Aucun document</span>
-                    ) : (
-                      <div className="d-flex flex-column gap-1">
-                        {demande.rne_doc_file && (
-                          <a
-                            href={demande.rne_doc_file}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="btn btn-sm btn-outline-primary"
-                          >
-                            Voir RNE
-                          </a>
-                        )}
-                        {demande.patente_doc_file && (
-                          <a
-                            href={demande.patente_doc_file}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="btn btn-sm btn-outline-secondary"
-                          >
-                            Voir patente
-                          </a>
-                        )}
-                      </div>
-                    )}
-                  </td>
+                return (
+                  <tr key={demandeId ?? Math.random()}>
+                    <td>
+                      <code>#{demandeId ?? "—"}</code>
+                    </td>
 
-                  <td className="text-end">
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-success me-2"
-                      onClick={() => handleDecision(demande.demande_numero, "approve")}
-                    >
-                      Accepter
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-danger"
-                      onClick={() => handleDecision(demande.demande_numero, "decline")}
-                    >
-                      Refuser
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                    <td>{demande.legal_name || "—"}</td>
+
+                    <td>
+                      {demande.rep_prenom} {demande.rep_nom}
+                    </td>
+
+                    <td>
+                      {demande.company_email || demande.rep_email || "—"}
+                    </td>
+
+                    <td>{formatDate(demande.created_at)}</td>
+
+                    <td>
+                      <span
+                        className={
+                          "badge rounded-pill " +
+                          (demande.statut === "refusee"
+                            ? "bg-danger-subtle text-danger"
+                            : "bg-warning-subtle text-warning-emphasis")
+                        }
+                      >
+                        {demande.statut || "en_attente"}
+                      </span>
+                    </td>
+
+                    {/* Documents */}
+                    <td>
+                      {!demande.rne_doc_file && !demande.patente_doc_file ? (
+                        <span className="text-muted small">
+                          Aucun document
+                        </span>
+                      ) : (
+                        <div className="d-flex flex-column gap-1">
+                          {demande.rne_doc_file && (
+                            <a
+                              href={demande.rne_doc_file}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="btn btn-sm btn-outline-primary"
+                            >
+                              Voir RNE
+                            </a>
+                          )}
+                          {demande.patente_doc_file && (
+                            <a
+                              href={demande.patente_doc_file}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="btn btn-sm btn-outline-secondary"
+                            >
+                              Voir patente
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="text-end">
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-success me-2"
+                        disabled={!demandeId}
+                        onClick={() =>
+                          handleDecision(demandeId, "approve")
+                        }
+                      >
+                        Accepter
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-danger"
+                        disabled={!demandeId}
+                        onClick={() =>
+                          handleDecision(demandeId, "decline")
+                        }
+                      >
+                        Refuser
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
           </tbody>
         </table>
       </div>

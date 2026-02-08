@@ -1,4 +1,3 @@
-// src/components/GestionSMEKS/AgencesList.jsx
 import React, { useEffect, useState } from "react";
 import api from "../../api/client";
 
@@ -6,13 +5,21 @@ export default function AgencesList() {
   const [agences, setAgences] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  const pick = (...vals) => vals.find((v) => v !== undefined && v !== null && String(v).trim() !== "") || "";
+
   const fetchAgences = async () => {
     setLoading(true);
     try {
       const res = await api.get("/agences/");
       const data = Array.isArray(res.data) ? res.data : res.data.results || [];
-      // tri alphabétique par nom
-      data.sort((a, b) => (a.nom || "").localeCompare(b.nom || ""));
+
+      // tri alphabétique par "nom" (fallback)
+      data.sort((a, b) => {
+        const an = pick(a.nom, a.legal_name, a.name).toLowerCase();
+        const bn = pick(b.nom, b.legal_name, b.name).toLowerCase();
+        return an.localeCompare(bn);
+      });
+
       setAgences(data);
     } catch (err) {
       console.error("Erreur lors du chargement des agences", err);
@@ -48,6 +55,7 @@ export default function AgencesList() {
               <th>Email contact</th>
             </tr>
           </thead>
+
           <tbody>
             {loading && (
               <tr>
@@ -66,23 +74,37 @@ export default function AgencesList() {
             )}
 
             {!loading &&
-              agences.map((ag) => (
-                <tr key={ag.id}>
-                  <td>
-                    <code>#{ag.id}</code>
-                  </td>
-                  <td>{ag.nom || "—"}</td>
-                  <td>{ag.pays || "—"}</td>
-                  <td>{ag.email || "—"}</td>
-                  <td>{ag.telephone || "—"}</td>
-                  <td>
-                    {ag.rep_prenom || ag.rep_nom
-                      ? `${ag.rep_prenom || ""} ${ag.rep_nom || ""}`.trim()
-                      : "—"}
-                  </td>
-                  <td>{ag.rep_email || "—"}</td>
-                </tr>
-              ))}
+              agences.map((ag) => {
+                const id = ag.id ?? ag.pk;
+
+                // ✅ champs "agence" (selon ton modèle actuel)
+                const nom = pick(ag.nom, ag.legal_name, ag.raison_sociale);
+                const pays = pick(ag.pays, ag.company_country);
+                const emailAgence = pick(ag.email, ag.company_email);
+                const telephone = pick(ag.telephone, ag.company_phone);
+
+                // ✅ contact principal
+                const contactNom = pick(
+                  `${pick(ag.rep_prenom)} ${pick(ag.rep_nom)}`.trim(),
+                  ag.contact_principal
+                );
+
+                const emailContact = pick(ag.rep_email, ag.email_contact);
+
+                return (
+                  <tr key={id ?? Math.random()}>
+                    <td>
+                      <code>#{id ?? "—"}</code>
+                    </td>
+                    <td>{nom || "—"}</td>
+                    <td>{pays || "—"}</td>
+                    <td>{emailAgence || "—"}</td>
+                    <td>{telephone || "—"}</td>
+                    <td>{contactNom || "—"}</td>
+                    <td>{emailContact || "—"}</td>
+                  </tr>
+                );
+              })}
           </tbody>
         </table>
       </div>

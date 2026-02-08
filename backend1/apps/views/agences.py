@@ -22,10 +22,12 @@ from apps.serializers import (
     AgencyApplicationAdminSerializer,
     AgencyApplicationPublicSerializer,
     AgenceVoyageSerializer,
+    ChangePasswordSerializer,
 )
 
 User = get_user_model()
 
+from rest_framework.permissions import IsAuthenticated
 
 # =========================
 # Helpers généraux
@@ -451,3 +453,21 @@ class AgenceVoyageViewSet(viewsets.ModelViewSet):
         if is_superadmin(self.request.user):
             return super().get_queryset()
         return AgenceVoyage.objects.none()
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        user.set_password(serializer.validated_data["new_password"])
+        user.save(update_fields=["password"])
+
+        # ⚠️ IMPORTANT : si tu utilises JWT en access token, après set_password
+        # les refresh tokens côté cookie peuvent rester valides selon ta config.
+        # Mais côté front, tu peux forcer logout si tu veux.
+
+        return Response({"detail": "Mot de passe modifié avec succès."}, status=status.HTTP_200_OK)

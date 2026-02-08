@@ -130,6 +130,8 @@ export default function FicheMouvementRecap() {
         setLoadingVol(true);
         const { data } = await api.get(`/fiches-mouvement/${resolvedFicheId}/`);
         setLoadedVol(data || {});
+              
+        setRemarque((data?.remarque || "").toString()); // ✅ important
       } catch (e) {
         console.error(e);
       } finally {
@@ -282,6 +284,7 @@ export default function FicheMouvementRecap() {
       date: meta.date,
       numero_vol: meta.numero_vol,
       aeroport: meta.aeroport,
+      remarque: (remarque || "").trim(), // ✅ AJOUT
     };
 
     const { data } = await api.post("/dossiers/to-fiche/", body);
@@ -343,7 +346,8 @@ export default function FicheMouvementRecap() {
         try {
           await postHotelScheduleWithOptionalRemark(id, {
             hotel_schedule: schedule,
-            remarque: (remarque || "").trim() || undefined,
+            remarque: (remarque ?? "").toString(),
+
           });
           successes.push(id);
         } catch (e) {

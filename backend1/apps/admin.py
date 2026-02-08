@@ -84,6 +84,7 @@ class DossierAdmin(admin.ModelAdmin):
 
 @admin.register(FicheMouvement)
 class FicheMouvementAdmin(admin.ModelAdmin):
+    exclude = ("observation",)
     list_display = ("ref", "agence", "type", "date", "hotel", "pax")
     search_fields = ("ref", "client_to", "hotel__nom", "numero_vol")
     list_filter = ("agence", "type", "date")

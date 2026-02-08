@@ -1,6 +1,6 @@
 # b2b/views/import_helpers.py
 from django.utils import timezone
-from b2b.models import ImportBatch, ImportBatchItem
+from apps.models import ImportBatch, ImportBatchItem
 
 
 def register_import_batch(user, agence, dossiers, label=None):

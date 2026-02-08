@@ -17,6 +17,7 @@ import SuiviMissions from "../components/GestionSMEKS/SuiviMissionsOM";
 // ====== Pages existantes (espace agence) ======
 import AgenceVoyageList from "../pages/agences/AgenceVoyageList";
 import AjouterAgence from "../pages/agences/AjouterAgence";
+import ParametresPage from "../pages/agences/ParametresPage";
 import ModifierAgence from "../pages/agences/ModifierAgence";
 import BusList from "../pages/ressources/BusList";
 import ChauffeurList from "../pages/ressources/ChauffeurList";
@@ -83,6 +84,8 @@ export default function AppRoutes() {
         <Route element={<AppShell />}>
           <Route path="/dashboard/superadmin" element={<DashboardAgence />} />
           <Route path="/agence/:agence_id/dashboard" element={<DashboardAgence />} />
+          <Route path="/agence/:agenceId/parametres" element={<ParametresPage />} />
+
 
           {/* Fiches mouvement */}
           <Route path="/agence/:agence_id/fiches-mouvement" element={<FichesMouvementList />} />
@@ -151,6 +154,7 @@ export default function AppRoutes() {
         <Route element={<GestionLayout />}>
           <Route path="/gestion" element={<GestionDashboard />} />
           <Route path="/gestion/agences" element={<AgencesList />} />
+          
           <Route path="/gestion/suivi/missions-om" element={<SuiviMissions />} />
           <Route path="/gestion/agences/demandes" element={<DemandesInscriptionList />} />
           <Route path="/gestion/agences/zonage" element={<ZonesPage />} />

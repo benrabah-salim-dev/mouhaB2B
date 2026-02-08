@@ -8,7 +8,7 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import (
+from apps.models import (
     AgenceVoyage,
     AgencyApplication,
     Chauffeur,
@@ -26,6 +26,9 @@ from .models import (
     Vehicule,
     Zone,
 )
+
+from django.contrib.auth.password_validation import validate_password
+
 
 # ============================================================
 # Profile / User
@@ -61,11 +64,11 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 # ============================================================
-# AgencyApplication (public / admin)# ============================================================
+# AgencyApplication (public / admin)
+# ============================================================
 
 class AgencyApplicationPublicSerializer(serializers.ModelSerializer):
     rep_date_naissance = serializers.DateField(required=False, allow_null=True)
-
 
     class Meta:
         model = AgencyApplication
@@ -99,11 +102,35 @@ class AgencyApplicationPublicSerializer(serializers.ModelSerializer):
         }
 
     def create(self, validated_data):
-        # place-holder OTP
         otp_code = validated_data.get("otp_code")
         if otp_code:
             validated_data["otp_verified"] = True
         return super().create(validated_data)
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(write_only=True, required=True, trim_whitespace=False)
+    new_password = serializers.CharField(write_only=True, required=True, trim_whitespace=False)
+    new_password_confirm = serializers.CharField(write_only=True, required=True, trim_whitespace=False)
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+
+        old_password = attrs.get("old_password")
+        new_password = attrs.get("new_password")
+        confirm = attrs.get("new_password_confirm")
+
+        if not user.check_password(old_password):
+            raise serializers.ValidationError({"old_password": "Mot de passe actuel incorrect."})
+
+        if new_password != confirm:
+            raise serializers.ValidationError({"new_password_confirm": "La confirmation ne correspond pas."})
+
+        if new_password == old_password:
+            raise serializers.ValidationError({"new_password": "Le nouveau mot de passe doit être différent."})
+
+        validate_password(new_password, user=user)
+        return attrs
 
 
 class AgencyApplicationAdminSerializer(serializers.ModelSerializer):
@@ -151,9 +178,6 @@ class AgenceVoyageSerializer(serializers.ModelSerializer):
 
 
 def _parse_time(val: Any) -> Optional[dtime]:
-    """
-    horaires peut être "11:35" ou "11:35:00" ou null
-    """
     if not val:
         return None
     s = str(val).strip()
@@ -168,9 +192,6 @@ def _parse_time(val: Any) -> Optional[dtime]:
 
 
 def _mission_dt(m: Mission) -> Optional[datetime]:
-    """
-    Construit un datetime aware à partir de Mission.date + Mission.horaires
-    """
     if not m or not getattr(m, "date", None):
         return None
     t = _parse_time(getattr(m, "horaires", None)) or dtime(0, 0)
@@ -247,7 +268,7 @@ class HotelSerializer(serializers.ModelSerializer):
 
 
 # ============================================================
-# Fiche Mouvement
+# Fiche Mouvement (FIX remarque + expose observation)
 # ============================================================
 
 class FicheMouvementSerializer(serializers.ModelSerializer):
@@ -255,6 +276,10 @@ class FicheMouvementSerializer(serializers.ModelSerializer):
     ville = serializers.SerializerMethodField()
     code_postal = serializers.SerializerMethodField()
     hotels = serializers.SerializerMethodField()
+
+    # ✅ champs DB séparés
+    observation = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    remarque = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = FicheMouvement
@@ -278,23 +303,39 @@ class FicheMouvementSerializer(serializers.ModelSerializer):
             "enfants",
             "bebe",
             "hotel_schedule",
-            "remarque",
+            "observation",   # ✅ exposé
+            "remarque",      # ✅ exposé
             "created_by",
             "created_at",
         ]
         read_only_fields = ["ref", "created_by", "created_at"]
 
-    def _first_dossier(self, obj: FicheMouvement):
+    def _get_dossiers(self, obj: FicheMouvement):
+        dossiers = []
+        items_rel = getattr(obj, "items", None)
+        if items_rel is not None:
+            try:
+                for it in items_rel.select_related("dossier").all():
+                    if getattr(it, "dossier_id", None):
+                        dossiers.append(it.dossier)
+            except Exception:
+                pass
+        if dossiers:
+            return dossiers
+
         rel = getattr(obj, "dossiers", None)
-        if not rel:
-            return None
-        try:
-            return rel.all().first()
-        except Exception:
-            return None
+        if rel is not None:
+            try:
+                return list(rel.all())
+            except Exception:
+                return []
+        return []
+
+    def _first_dossier(self, obj: FicheMouvement):
+        dossiers = self._get_dossiers(obj)
+        return dossiers[0] if dossiers else None
 
     def get_hotels(self, obj: FicheMouvement):
-        # 1) Priorité : hotel_schedule
         hs = getattr(obj, "hotel_schedule", None)
         if isinstance(hs, list) and hs:
             names = []
@@ -305,33 +346,34 @@ class FicheMouvementSerializer(serializers.ModelSerializer):
                         names.append(name)
             return list(dict.fromkeys(names))
 
-        # 2) Fallback : dossiers -> hotel
-        rel = getattr(obj, "dossiers", None)
-        if not rel:
-            return []
         names = []
-        for d in rel.all():
-            h = getattr(d, "hotel", None)
+        for d in self._get_dossiers(obj):
+            h = (getattr(d, "hotel", None) or "").strip()
             if h:
-                names.append(str(h).strip())
-        return list(dict.fromkeys([n for n in names if n]))
+                names.append(h)
+        return list(dict.fromkeys(names))
 
     def get_ville(self, obj: FicheMouvement):
         d0 = self._first_dossier(obj)
         if d0 and getattr(d0, "zone_fk_id", None):
             return getattr(d0.zone_fk, "ville", None) or getattr(d0.zone_fk, "nom", None)
+        if d0:
+            return (getattr(d0, "ville", None) or "").strip() or None
         return None
 
     def get_code_postal(self, obj: FicheMouvement):
         d0 = self._first_dossier(obj)
         if d0 and getattr(d0, "zone_fk_id", None):
             return getattr(d0.zone_fk, "code_postal", None) or getattr(d0.zone_fk, "cp", None)
+        if d0:
+            return (getattr(d0, "code_postal", None) or "").strip() or None
         return None
 
     def validate(self, data):
         adulte = data.get("adulte", 0) or 0
         enfants = data.get("enfants", 0) or 0
         bebe = data.get("bebe", 0) or 0
+
         if not data.get("pax"):
             data["pax"] = adulte + enfants + bebe
         return data
@@ -342,19 +384,16 @@ class FicheMouvementSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class MissionSerializer(serializers.ModelSerializer):
-    # compat front: heure_vol = horaires
     heure_vol = serializers.TimeField(source="horaires", required=False, allow_null=True)
 
     kind = serializers.SerializerMethodField()
     vehicule = serializers.SerializerMethodField()
     chauffeur = serializers.SerializerMethodField()
 
-    # ✅ affichage: pax + fenêtre
     pax_total = serializers.SerializerMethodField()
     date_heure_debut = serializers.SerializerMethodField()
     date_heure_fin = serializers.SerializerMethodField()
 
-    # ✅ détails passage
     passage = serializers.SerializerMethodField()
 
     class Meta:
@@ -397,12 +436,10 @@ class MissionSerializer(serializers.ModelSerializer):
         return dt_naive
 
     def get_kind(self, obj: Mission):
-        # priorité : obj.main_kind si tu l’as
         mk = getattr(obj, "main_kind", None)
         if mk:
             return "arrivee" if str(mk).upper().startswith(("A", "L")) else "depart"
 
-        # fallback : 1ere fiche
         try:
             f0 = obj.fiches.filter(is_deleted=False).first()
             if f0:
@@ -478,7 +515,6 @@ class MissionSerializer(serializers.ModelSerializer):
                     "pax": item.get("pax", None),
                 })
 
-        # dédoublonnage (hotel+heure) en gardant l’ordre
         seen = set()
         unique = []
         for x in out:
@@ -531,6 +567,14 @@ class DossierSerializer(serializers.ModelSerializer):
 
     zone = serializers.SerializerMethodField()
 
+    # ✅ alias: `remarque` côté front <-> `observation` en DB (OK uniquement pour DOSSIER)
+    remarque = serializers.CharField(
+        source="observation",
+        allow_blank=True,
+        allow_null=True,
+        required=False
+    )
+
     class Meta:
         model = Dossier
         fields = [
@@ -559,6 +603,7 @@ class DossierSerializer(serializers.ModelSerializer):
             "enfants",
             "bb_gratuit",
             "observation",
+            "remarque",
             "created_at",
             "created_by",
         ]

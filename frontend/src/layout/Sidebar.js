@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
-  FaUsers, FaCar, FaSyncAlt, FaMapMarkedAlt,
+  FaUsers, FaCar, FaSyncAlt, FaMapMarkedAlt,FaCog,
   FaPlaneDeparture, FaPlaneArrival, FaTasks, FaChevronDown,
   FaExchangeAlt, FaShuttleVan, FaBars, FaArchive, FaTimes, FaCloudUploadAlt, FaSignOutAlt
 } from "react-icons/fa";
@@ -101,6 +101,7 @@ const Sidebar = ({ agenceId, onRefresh, refreshing, onLogout, currentSpace = "ag
           <SidebarLink to="/excursions" icon={<FaMapMarkedAlt />} extraClass="small opacity-75" collapsed={collapsed}>Excursions</SidebarLink>
           <SidebarLink to={`/agence/${agenceId}/missions/navettes`} icon={<FaShuttleVan />} extraClass="small opacity-75" collapsed={collapsed}>Navettes</SidebarLink>
         </div>
+        
       )}
     </>
   );
@@ -116,6 +117,13 @@ const Sidebar = ({ agenceId, onRefresh, refreshing, onLogout, currentSpace = "ag
 
         <nav className="flex-fill d-grid gap-2 overflow-y-auto px-2 custom-scrollbar">
           {currentSpace === "agence" && renderAgenceMenu()}
+            {/* ✅ Paramètres */}
+<SidebarLink to={`/agence/${agenceId}/parametres`} icon={<FaCog />} collapsed={collapsed}>
+  Paramètres
+</SidebarLink>
+
+
+
         </nav>
 
         <div className="sidebar-footer">

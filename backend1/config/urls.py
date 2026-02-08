@@ -33,6 +33,7 @@ from apps.views.rentout import RentoutAvailableVehiclesAPIView
 from apps.views.excursions import ExcursionTemplateViewSet, ExcursionStepViewSet, ExcursionEventViewSet
 from apps.views.views_calendar import CalendarMissionsAPIView, CalendarResourcesAPIView
 from apps.views.gestion_suivi import GestionSuiviMissionsView, GestionSuiviMissionOMsView
+from apps.views.agences import ChangePasswordView
 
 router = DefaultRouter()
 router.register(r"fiches-mouvement", FicheMouvementViewSet)
@@ -70,6 +71,8 @@ urlpatterns = [
     path("api/auth/refresh/", RefreshAccessView.as_view(), name="auth-refresh"),
     path("api/auth/logout/", LogoutView.as_view(), name="auth-logout"),
     path("api/auth/me/", UserMeAPIView.as_view(), name="auth-me"),
+    
+path("api/auth/change-password/", ChangePasswordView.as_view(), name="auth-change-password"),
 
     # Calendrier
     path("api/calendar/missions", CalendarMissionsAPIView.as_view()),
